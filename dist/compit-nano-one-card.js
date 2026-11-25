@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v1.4
+ * compit-nano-one-card  v1.5
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -17,7 +17,7 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v1.4';
+const VERSION = 'v1.5';
 
 // klucz: [domena, koncowka, opis, jednostka zapasowa]
 const DEFAULT_E = {
@@ -489,11 +489,8 @@ class CompitNanoOneCard extends HTMLElement {
       this._call('switch', w.state === 'on' ? 'turn_off' : 'turn_on', { entity_id: w.entity_id }, 'Wietrzenie → ' + (w.state === 'on' ? 'WYŁ.' : 'WŁ.'));
     }));
     this.shadowRoot.querySelectorAll('[data-tx]').forEach((el) => el.addEventListener('click', () => {
-      const a = el.dataset.tx, n = this._st('nadawanie');
-      if (a === 'ask') this._confirmTx = true;
-      else if (a === 'no') this._confirmTx = false;
-      else if (a === 'yes' && n) {
-        this._confirmTx = false;
+      const n = this._st('nadawanie');
+      if (n) {
         this._call('switch', n.state === 'on' ? 'turn_off' : 'turn_on', { entity_id: n.entity_id }, 'Sterowanie z HA → ' + (n.state === 'on' ? 'WYŁ.' : 'WŁ.'));
       }
       this._render();
@@ -529,18 +526,67 @@ class CompitNanoOneCard extends HTMLElement {
   }
 
   // zapis dozwolony? (gdy jest przelacznik "Nadawanie iNext", musi byc WL)
-  _canWrite() {
-    const n = this._st('nadawanie');
-    if (!n) return true;
-    return n.state === 'on';
+  // v1.5: przyciski nigdy nie sa zablokowane - karta sama wlacza "Sterowanie z HA" przed zapisem
+  _canWrite() { return true; }
+
+  _flashMsg(ok, txt) {
+    this._flash = { ok, txt, t: Date.now() };
+    clearTimeout(this._flashT);
+    this._flashT = setTimeout(() => { this._flash = null; this._schedule(); }, 6000);
+    this._schedule();
+  }
+
+  // czeka, az encja przyjmie stan (HA podaje nowe hass), max ms
+  _waitState(eid, state, ms) {
+    return new Promise((res) => {
+      const t0 = Date.now();
+      const tick = () => {
+        const s = this._hass && this._hass.states[eid];
+        if (s && s.state === state) return res(true);
+        if (Date.now() - t0 > ms) return res(false);
+        setTimeout(tick, 150);
+      };
+      tick();
+    });
   }
 
   async _call(domain, service, data, label) {
-    if (!this._canWrite() && !(domain === 'switch' && data.entity_id === this._id('nadawanie'))) return;
+    const lockId = this._id('nadawanie');
+    const isLock = domain === 'switch' && data.entity_id === lockId;
+    const st = this._st('status');
+    if (st && st.state !== 'on') { this._flashMsg(false, 'ESP offline – zmiana nie poszła: ' + label); return; }
     this._pushLog({ t: new Date(), e: 'karta', s: 'Zapis: ' + label });
-    try { await this._hass.callService(domain, service, data); }
-    catch (e) { this._pushLog({ t: new Date(), e: 'karta', s: 'Błąd zapisu (' + label + '): ' + (e && e.message ? e.message : e) }); }
-    this._schedule();
+    try {
+      const lock = this._st('nadawanie');
+      if (!isLock && lock && lock.state !== 'on') {
+        this._flashMsg(true, 'Włączam „Sterowanie z HA”…');
+        await this._hass.callService('switch', 'turn_on', { entity_id: lockId });
+        this._pushLog({ t: new Date(), e: 'karta', s: 'Sterowanie z HA → WŁ. (automatycznie)' });
+        if (!(await this._waitState(lockId, 'on', 5000))) throw new Error('ESP nie włączył „Sterowanie z HA”');
+      }
+      await this._hass.callService(domain, service, data);
+      this._flashMsg(true, '✓ wysłane: ' + label);
+    } catch (e) {
+      const m = e && e.message ? e.message : String(e);
+      this._pushLog({ t: new Date(), e: 'karta', s: 'Błąd zapisu (' + label + '): ' + m });
+      this._flashMsg(false, '✗ błąd: ' + label + ' – ' + m);
+    }
+  }
+
+  // encje sterujace, ktorych brakuje w HA (YAML v1.6)
+  _missingCtl() {
+    const need = [['set_tryb', 'set_bieg'], ['set_sezon'], ['set_bypass'], ['nadawanie'], ['t_reczna'], ['t_dzien'], ['t_noc'], ['t_poza'],
+      ['p_n1'], ['p_n2'], ['p_n3'], ['p_nw'], ['p_w1'], ['p_w2'], ['p_w3'], ['p_ww']];
+    return need.filter((alts) => !alts.some((k) => this._st(k))).map((alts) => this._id(alts[0]));
+  }
+
+  _missingBox() {
+    const miss = this._missingCtl();
+    if (!miss.length) return '';
+    const all = miss.length >= 10;
+    return `<div class="errbox"><b>${all ? 'Brak encji sterujących w HA – wgraj na ESP YAML v1.6.' : 'Brakuje części encji sterujących (YAML v1.6).'}</b>
+      <div class="small">Jak v1.6 już jest wgrany: Ustawienia → Urządzenia i usługi → ESPHome → Nano One → ⋮ → Przeładuj. Sprawdź też, czy encje nie są wyłączone (Ustawienia → Encje → filtr „wyłączone”).</div>
+      <details><summary>Czego brakuje (${miss.length})</summary><div class="miss">${miss.map((x) => `<code>${esc(x)}</code>`).join(' ')}</div></details></div>`;
   }
 
   _selectOpt(key, opt) {
@@ -617,7 +663,7 @@ class CompitNanoOneCard extends HTMLElement {
     const run = this._running();
     const gp = this._st('set_tryb') ? 'tryb' : 'bieg';
     const can = !!this._st('set_' + gp);
-    return `<div class="gauge ${can ? 'click' : ''}" ${can ? `data-pop="${gp}"` : `data-e="${esc(this._id('bieg'))}"`}>
+    return `<div class="gauge click" data-pop="${can ? gp : 'missing'}">
       <svg viewBox="0 0 100 100" class="ring"><circle cx="50" cy="50" r="38" class="rbg"/>
         <circle cx="50" cy="50" r="38" class="rfg" stroke-dasharray="${(C * p / 100).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 50 50)"/>
         <g transform="translate(50 50)"><g class="${run ? 'spin' : ''}" style="animation-duration:2s"><path d="M0 -16 C7 -14 6 -4 0 0 C-6 -4 -7 -14 0 -16Z M13.9 8 C10 14.5 1 10.5 0 0 C9.5 -1 16 3 13.9 8Z M-13.9 8 C-16 3 -9.5 -1 0 0 C-1 10.5 -10 14.5 -13.9 8Z" class="rblade"/></g></g></svg>
@@ -634,8 +680,8 @@ class CompitNanoOneCard extends HTMLElement {
     const bypOpen = this._st('bypass') && this._st('bypass').state === 'on';
     const cell = (pop, key, icon, label, val, cls, pill) => {
       const can = !!this._st(pop ? 'set_' + pop : '');
-      const attr = can ? `data-pop="${pop}"` : `data-e="${esc(this._id(key))}"`;
-      return `<div class="bcell ${can ? 'click' : ''} ${this._pop === pop ? 'open' : ''}" ${attr}>
+      const attr = `data-pop="${can ? pop : 'missing'}"`;
+      return `<div class="bcell click ${this._pop === pop ? 'open' : ''}" ${attr}>
         ${pill ? `<span class="pill">${ico(icon)}<b>${esc(val || '—')}</b></span>` : `${ico(icon, cls)}<span class="bl">${label}</span> <b class="${cls}">${esc(val || '—')}</b>`}</div>`;
     };
     const filtrOk = filtr === null ? null : !/(wymie|brud|zabr|alarm|on|1)/i.test(filtr);
@@ -649,6 +695,7 @@ class CompitNanoOneCard extends HTMLElement {
 
   _renderPop() {
     if (!this._pop) return '';
+    if (this._pop === 'missing') return `<div class="pop"><div class="poph">Nie mogę tego zmienić<button class="mini x" data-popclose>✕</button></div>${this._missingBox()}</div>`;
     if (this._pop === 'temp') {
       const t = ['t_reczna', 't_dzien', 't_noc', 't_poza'].map((k) => this._numCtl(k, 1)).join('');
       if (!t) return '';
@@ -661,6 +708,7 @@ class CompitNanoOneCard extends HTMLElement {
     const can = this._canWrite();
     return `<div class="pop">
       <div class="poph">${esc(DEFAULT_E[key][2])}: wybierz${can ? '' : ' <span class="warn">(zapis wyłączony, włącz „Sterowanie z HA”)</span>'}<button class="mini x" data-popclose>✕</button></div>
+      ${this._flashBox()}
       <div class="row">${opts.map((o) => `<button class="opt ${o === s.state ? 'on' : ''}" data-opt="${esc(o)}" data-optkey="${key}" ${can ? '' : 'disabled'}>${esc(o)}</button>`).join('')}</div>
     </div>`;
   }
@@ -675,21 +723,31 @@ class CompitNanoOneCard extends HTMLElement {
     const pcts = [['p_n1', 'p_w1', 'Bieg 1'], ['p_n2', 'p_w2', 'Bieg 2'], ['p_n3', 'p_w3', 'Bieg 3'], ['p_nw', 'p_ww', 'Wietrzenie']]
       .filter(([a, b]) => has(a) || has(b))
       .map(([a, b, l]) => `<tr><td>${l}</td><td>${this._pctCell(a, can)}</td><td>${this._pctCell(b, can)}</td></tr>`).join('');
-    if (!nadaw && !wiet && !temps && !pcts) return '';
     let lock = '';
     if (nadaw) {
       const on = nadaw.state === 'on';
-      lock = `<div class="lock ${on ? 'on' : ''}">${ico('lock')}<span>Sterowanie z HA (iNext): <b>${on ? 'WŁ. – zapis do Nano aktywny' : 'WYŁ. – zapis wyłączony'}</b></span>
-        ${this._confirmTx ? `<span class="warn">Na pewno ${on ? 'wyłączyć' : 'włączyć'}?</span><button class="mini" data-tx="yes">Tak</button><button class="mini" data-tx="no">Nie</button>`
-          : `<button class="mini" data-tx="ask">${on ? 'Wyłącz' : 'Włącz'}</button>`}</div>`;
+      lock = `<div class="lock ${on ? 'on' : ''}">${ico('lock')}<span>Sterowanie z HA (iNext): <b>${on ? 'WŁ.' : 'WYŁ. – włączy się samo przy pierwszej zmianie'}</b></span>
+        <button class="mini" data-tx="toggle">${on ? 'Wyłącz' : 'Włącz'}</button></div>`;
     }
     return `<div class="ctl">
       <h3 class="rest">Sterowanie</h3>
+      ${this._flashBox()}
+      ${this._offlineBox()}
+      ${this._missingBox()}
       ${lock}
       ${wiet ? `<div class="row"><button class="opt ${wiet.state === 'on' ? 'on' : ''}" data-wiet ${can ? '' : 'disabled'}>${ico('wind')} Wietrzenie: ${wiet.state === 'on' ? 'WŁ.' : 'WYŁ.'}</button></div>` : ''}
       ${temps ? `<div class="sublbl">Temperatury zadane</div><div class="nwrap">${temps}</div>` : ''}
       ${pcts ? `<div class="sublbl">Biegi % (nawiew / wywiew)</div><table class="ptab"><tr><th></th><th>Nawiew</th><th>Wywiew</th></tr>${pcts}</table>` : ''}
     </div>`;
+  }
+
+  _flashBox() {
+    const f = this._flash;
+    return f ? `<div class="flash ${f.ok ? 'ok' : 'bad'}">${esc(f.txt)}</div>` : '';
+  }
+  _offlineBox() {
+    const st = this._st('status');
+    return st && st.state !== 'on' ? '<div class="errbox"><b>ESP offline</b> – karta nie może teraz nic zmienić.</div>' : '';
   }
 
   _pctCell(k, can) {
@@ -707,8 +765,8 @@ class CompitNanoOneCard extends HTMLElement {
     const map = { tryb: tr || 'program', bieg: tr || 'bieg', bieg_zadany: tr || 'bieg', sezon: 'sezon', sezon_rej: 'sezon', bypass_tryb: 'bypass', bypass: 'bypass', bypass_rej: 'bypass', t_zadana: 'temp' };
     const pp = map[key];
     if (!pp) return null;
-    if (pp === 'temp') return ['t_reczna', 't_dzien', 't_noc', 't_poza'].some((k) => this._st(k)) ? 'temp' : null;
-    return this._st('set_' + pp) ? pp : null;
+    if (pp === 'temp') return ['t_reczna', 't_dzien', 't_noc', 't_poza'].some((k) => this._st(k)) ? 'temp' : 'missing';
+    return this._st('set_' + pp) ? pp : 'missing';
   }
 
   _numCtl(k, digits) {
@@ -1152,6 +1210,11 @@ const CSS = `
   .ninp { width:76px; font:inherit; font-size:1em; padding:5px 8px; border-radius:8px; border:1px solid var(--primary-color); background:var(--card-background-color,#fff); color:var(--primary-text-color); }
   .mini.ok { border-color:var(--primary-color); color:var(--primary-color); font-weight:700; }
   .tile.click, .flag.click { cursor:pointer; }
+  .errbox { padding:10px 12px; border-radius:10px; background:rgba(255,90,79,.14); border:1px solid rgba(255,90,79,.5); margin:6px 0 10px; font-size:.9em; }
+  .errbox .small { margin-top:4px; color:var(--secondary-text-color); }
+  .flash { padding:7px 12px; border-radius:10px; margin:6px 0; font-size:.88em; font-weight:600; }
+  .flash.ok { background:rgba(61,220,111,.14); color:var(--success-color,#2e9e4f); }
+  .flash.bad { background:rgba(255,90,79,.14); color:var(--error-color,#db4437); }
   .tile.click:hover { outline:1px solid var(--primary-color); }
   .tile.click .tv2::after { content:' ✎'; font-size:.6em; color:var(--secondary-text-color); }
   @media (max-width:420px) { .pm { width:26px; height:26px; } .pc { gap:4px; } .pc b { min-width:36px; } .ptab td, .ptab th { padding:3px 1px; } .body { padding:10px 10px; } }

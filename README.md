@@ -44,7 +44,7 @@ Wszystko zmieniasz w karcie, nie w encjach ESP. Przyciski pojawiają się, gdy w
 
 Ze starszym YAML-em (v1.4) karta dalej działa na `ustaw_bieg`, `ustaw_program`, przełączniku `wietrzenie` i `nadawanie_inext`.
 
-**Blokada:** przełącznik `switch.<prefix>_sterowanie_z_ha_inext` („Sterowanie z HA (iNext)”). Gdy jest WYŁ., wszystkie przyciski są nieaktywne. Włączasz go w karcie z potwierdzeniem „Na pewno?”. Każdy zapis i każdy błąd zapisu trafia do logu zdarzeń w Diagnostyce.
+**Bez szukania blokady:** przełącznik `switch.<prefix>_sterowanie_z_ha_inext` („Sterowanie z HA (iNext)”) karta włącza sama przy pierwszej zmianie, czeka, aż ESP potwierdzi, i dopiero wysyła wartość. Po każdej zmianie pokazuje „✓ wysłane” albo „✗ błąd”. Gdy ESP nie ma encji sterujących, karta pokazuje czerwony pasek „Wgraj na ESP YAML v1.6” z listą brakujących encji, a gdy ESP jest offline, mówi to wprost.
 
 ## Instalacja przez HACS
 
@@ -180,6 +180,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v1.5** – karta sama włącza „Sterowanie z HA” przed zapisem (bez pytania i szukania przełącznika), komunikaty ✓/✗ po każdej zmianie, czerwony pasek „Wgraj na ESP YAML v1.6” z listą brakujących encji, pasek „ESP offline”, sekcja Sterowanie widoczna zawsze.
 - **v1.4** – każda wartość klikalna i edytowalna w karcie (wpisywanie liczb, kafle Bieg/Tryb/Temp. zadana i plakietki Bypass/Sezon otwierają wybór), karta przerysowuje się tylko przy zmianie encji `nano_one_*` i nigdy w trakcie kliknięcia (koniec skakania i gubienia klików), łapanie zdublowanych encji `_2`/`_3` z ostrzeżeniem w Diagnostyce.
 - **v1.3** – sterowanie z karty pod YAML v1.6: jeden wybór trybu (`ustaw_tryb`: ręczny stop/bieg 1–3, wg zegara, świąteczny, poza domem) z wskaźnika biegu i z PROGRAM, blokada „Sterowanie z HA (iNext)”, warianty nazw encji (karta działa ze starym i nowym YAML-em).
 - **v1.2** – wygląd wg wzoru (ciemny panel, schemat wymiennika z kaflami, wskaźnik biegu, pasek PROGRAM/BYPASS/SEZON/FILTR, plakietka PRACA), sterowanie pod YAML v1.4 (bieg, program, bypass, sezon, wietrzenie, temperatury zadane, % biegów) z blokadą „Nadawanie iNext”, w Diagnostyce ramki wysłane iNext i ostatnia wymiana iNext, opcje `theme` i `niepewne`.
