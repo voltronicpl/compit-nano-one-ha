@@ -11,7 +11,11 @@ Podgląd jest zrobiony na przykładowych wartościach.
 
 ## Co jest w karcie
 
-**Zakładka Rekuperator**
+**Zakładka Rekuperator** (od v1.2 ciemny wygląd wg wzoru, jasny: `theme: light`)
+- nagłówek REKUPERACJA / COMPIT · C14 z plakietką PRACA / WYBIEG / STOP / OFFLINE (`status_wentylatorow`, status ESP)
+- schemat wymiennika: kafle czerpnia, wywiew, nawiew, wyrzut, świecące strumienie, animacja przepływu, gdy wentylatory pracują, obejście przy otwartym bypassie
+- okrągły wskaźnik biegu z % wentylatora nawiewu
+- dolny pasek: PROGRAM, BYPASS, SEZON, FILTR
 - schemat centrali: czerpnia, nawiew, wywiew, wyrzutnia, kręcące się wentylatory z % wysterowania, stan bypassu
 - sprawność odzysku (z encji `sprawnosc_odzysku`, a jak jej nie ma, liczona z temperatur)
 - bieg, tryb, bieg zadany, harmonogram, temp. pokojowa i zadana, wilgotność, CO₂, przepływ, obroty, nagrzewnica, GWC, kominek, filtry, alarm, ostrzeżenie, godziny pracy, wersja Nano One
@@ -27,6 +31,17 @@ Podgląd jest zrobiony na przykładowych wartościach.
 
 Kliknięcie w wartość otwiera standardowe okno encji HA. Karta tylko czyta, niczego nie zmienia w centrali.
 
+## Sterowanie (YAML v1.4, zapis do Nano jako iNext)
+
+Przyciski pojawiają się tylko, gdy w HA są encje sterujące z ESPHome:
+- klik w wskaźnik biegu: Stop / Bieg 1 / 2 / 3 (`select.<prefix>_ustaw_bieg`)
+- klik w PROGRAM / BYPASS / SEZON: lista opcji (`select.<prefix>_ustaw_program`, `_ustaw_bypass`, `_ustaw_sezon`)
+- Wietrzenie wł./wył. (`switch.<prefix>_wietrzenie`)
+- Temperatury zadane z +/−: ręczna, dzień, noc, poza domem (`number.*`)
+- Biegi % z +/−: nawiew i wywiew dla biegów 1–3 i wietrzenia (`number.*`)
+
+**Blokada:** gdy jest przełącznik `switch.<prefix>_nadawanie_inext` i jest WYŁ., wszystkie przyciski są nieaktywne. Włącza się go w karcie z potwierdzeniem „Na pewno?”. Każdy zapis i każdy błąd zapisu trafia do logu zdarzeń w Diagnostyce.
+
 ## Instalacja przez HACS
 
 1. HACS → ⋮ → **Custom repositories** → `https://github.com/voltronicpl/compit-nano-one-ha`, typ **Dashboard** → Dodaj → Pobierz. Przeładuj przeglądarkę.
@@ -36,6 +51,8 @@ Kliknięcie w wartość otwiera standardowe okno encji HA. Karta tylko czyta, ni
    # opcjonalnie:
    # prefix: nano_one          # początek ID encji z ESPHome (domyślnie nano_one)
    # title: Rekuperacja
+   # theme: light             # jasny wygląd w kolorach motywu HA (domyślnie ciemny wg wzoru)
+   # niepewne: []             # które temperatury oznaczać "?" (domyślnie t_czerpnia, t_wywiew)
    # tab: diagnostyka          # zakładka startowa
    # history_hours: 6          # ile godzin wstecz pokazuje ramki i log w Diagnostyce
    # entities:                 # gdy jakaś encja ma inne ID
@@ -128,6 +145,29 @@ Surowa ramka (`ostatnia_ramka`) to tekst HEX, np. `A9 10 35 63 … 23`. Może by
 | `r_e3_3b` | `sensor.<prefix>_c14_ramka_e3_strona_3b` | E3 3B |
 | `r_aero` | `sensor.<prefix>_c14_ramka_aero` | AERO |
 | `r_bajty` | `sensor.<prefix>_surowe_bajty` | Surowe bajty |
+| `status_went` | `sensor.<prefix>_status_wentylatorow` | Status wentylatorów |
+| `bieg_centr` | `sensor.<prefix>_bieg_centrali` | Bieg centrali |
+| `harm_akt` | `binary_sensor.<prefix>_harmonogram_aktywny` | Harmonogram |
+| `set_bieg` | `select.<prefix>_ustaw_bieg` | Bieg |
+| `set_program` | `select.<prefix>_ustaw_program` | Program |
+| `set_sezon` | `select.<prefix>_ustaw_sezon` | Sezon |
+| `set_bypass` | `select.<prefix>_ustaw_bypass` | Bypass |
+| `sw_wietrz` | `switch.<prefix>_wietrzenie` | Wietrzenie |
+| `nadawanie` | `switch.<prefix>_nadawanie_inext` | Nadawanie iNext |
+| `t_reczna` | `number.<prefix>_temperatura_reczna` | Ręczna |
+| `t_dzien` | `number.<prefix>_temperatura_dzien` | Dzień |
+| `t_noc` | `number.<prefix>_temperatura_noc` | Noc |
+| `t_poza` | `number.<prefix>_temperatura_poza_domem` | Poza domem |
+| `p_n1` | `number.<prefix>_nawiew_bieg_1` | Nawiew bieg 1 |
+| `p_n2` | `number.<prefix>_nawiew_bieg_2` | Nawiew bieg 2 |
+| `p_n3` | `number.<prefix>_nawiew_bieg_3` | Nawiew bieg 3 |
+| `p_nw` | `number.<prefix>_nawiew_wietrzenie` | Nawiew wietrzenie |
+| `p_w1` | `number.<prefix>_wywiew_bieg_1` | Wywiew bieg 1 |
+| `p_w2` | `number.<prefix>_wywiew_bieg_2` | Wywiew bieg 2 |
+| `p_w3` | `number.<prefix>_wywiew_bieg_3` | Wywiew bieg 3 |
+| `p_ww` | `number.<prefix>_wywiew_wietrzenie` | Wywiew wietrzenie |
+| `ramki_tx` | `sensor.<prefix>_ramki_wyslane_inext` | Ramki wysłane iNext |
+| `inext` | `sensor.<prefix>_c14_inext` | Ostatnia wymiana iNext |
 
 Kafle encji, których nie ma w HA (np. filtry, alarm, CO₂ w YAML v1.3), są ukryte i pojawią się same, jak dojdą do YAML-a. Tekstowe encje (np. `gwc`, `kominek`, `sezon`) pokazują się jako plakietki ze stanem. Encje z „?” w nazwie w YAML-u (mapowanie niepewne) mają pomarańczowy znak **?** na kaflach i „(?)” na schemacie.
 
@@ -135,6 +175,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v1.2** – wygląd wg wzoru (ciemny panel, schemat wymiennika z kaflami, wskaźnik biegu, pasek PROGRAM/BYPASS/SEZON/FILTR, plakietka PRACA), sterowanie pod YAML v1.4 (bieg, program, bypass, sezon, wietrzenie, temperatury zadane, % biegów) z blokadą „Nadawanie iNext”, w Diagnostyce ramki wysłane iNext i ostatnia wymiana iNext, opcje `theme` i `niepewne`.
 - **v1.1** – pod YAML v1.3: plakietki (wentylacja, bypass tryb, sezon, chłodzenie, wietrzenie, urlop, poza domem), sekcja Nastawy, znacznik „?” dla niepewnych encji, encje diagnostyczne przeniesione do Diagnostyki (surowe pola C14, rejestry, serwis, ustawienia ESP), wszystkie ramki C14 (Nano status/nastawy, E3 3A/3B, AERO, surowe bajty) z przełącznikiem źródła, więcej liczników magistrali.
 - **v1.0** – pierwsza wersja: zakładki Rekuperator i Diagnostyka, kopiowanie i pobieranie całego logu, dekoder ramek C14, automatyczne kafle dla nieznanych encji.
 

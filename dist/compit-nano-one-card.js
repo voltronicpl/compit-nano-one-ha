@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v1.1
+ * compit-nano-one-card  v1.2
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -7,6 +7,8 @@
  *   prefix: nano_one          # opcjonalnie, poczatek ID encji z ESPHome (domyslnie nano_one)
  *   title: Rekuperacja        # opcjonalnie
  *   tab: rekuperator          # opcjonalnie, zakladka startowa: rekuperator | diagnostyka
+ *   theme: dark               # opcjonalnie: dark (domyslnie, wg wzoru) | light (kolory motywu HA)
+ *   niepewne: [t_czerpnia, t_wywiew]  # opcjonalnie, klucze oznaczane "?" (niepewne mapowanie); [] = zadne
  *   history_hours: 6          # opcjonalnie, ile godzin wstecz czytac log i ramki w Diagnostyce
  *   entities:                 # opcjonalnie, nadpisanie pojedynczych encji
  *     t_nawiew: sensor.moja_temperatura_nawiewu
@@ -15,7 +17,7 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v1.1';
+const VERSION = 'v1.2';
 
 // klucz: [domena, koncowka, opis, jednostka zapasowa]
 const DEFAULT_E = {
@@ -104,13 +106,54 @@ const DEFAULT_E = {
   r_e3_3b:      ['sensor', 'c14_ramka_e3_strona_3b',     'E3 3B',            ''],
   r_aero:       ['sensor', 'c14_ramka_aero',             'AERO',             ''],
   r_bajty:      ['sensor', 'surowe_bajty',               'Surowe bajty',     ''],
+  // v1.2: YAML v1.4 - stan i sterowanie (zapis jako iNext)
+  status_went:  ['sensor', 'status_wentylatorow',        'Status wentylatorów', ''],
+  bieg_centr:   ['sensor', 'bieg_centrali',              'Bieg centrali',    ''],
+  harm_akt:     ['binary_sensor', 'harmonogram_aktywny', 'Harmonogram',      ''],
+  set_bieg:     ['select', 'ustaw_bieg',                 'Bieg',             ''],
+  set_program:  ['select', 'ustaw_program',              'Program',          ''],
+  set_sezon:    ['select', 'ustaw_sezon',                'Sezon',            ''],
+  set_bypass:   ['select', 'ustaw_bypass',               'Bypass',           ''],
+  sw_wietrz:    ['switch', 'wietrzenie',                 'Wietrzenie',       ''],
+  nadawanie:    ['switch', 'nadawanie_inext',            'Nadawanie iNext',  ''],
+  t_reczna:     ['number', 'temperatura_reczna',         'Ręczna',           '°C'],
+  t_dzien:      ['number', 'temperatura_dzien',          'Dzień',            '°C'],
+  t_noc:        ['number', 'temperatura_noc',            'Noc',              '°C'],
+  t_poza:       ['number', 'temperatura_poza_domem',     'Poza domem',       '°C'],
+  p_n1:         ['number', 'nawiew_bieg_1',              'Nawiew bieg 1',    '%'],
+  p_n2:         ['number', 'nawiew_bieg_2',              'Nawiew bieg 2',    '%'],
+  p_n3:         ['number', 'nawiew_bieg_3',              'Nawiew bieg 3',    '%'],
+  p_nw:         ['number', 'nawiew_wietrzenie',          'Nawiew wietrzenie','%'],
+  p_w1:         ['number', 'wywiew_bieg_1',              'Wywiew bieg 1',    '%'],
+  p_w2:         ['number', 'wywiew_bieg_2',              'Wywiew bieg 2',    '%'],
+  p_w3:         ['number', 'wywiew_bieg_3',              'Wywiew bieg 3',    '%'],
+  p_ww:         ['number', 'wywiew_wietrzenie',          'Wywiew wietrzenie','%'],
+  ramki_tx:     ['sensor', 'ramki_wyslane_inext',        'Ramki wysłane iNext', ''],
+  inext:        ['sensor', 'c14_inext',                  'Ostatnia wymiana iNext', ''],
 };
+
+// ikony (viewBox 24x24, stroke)
+const ICO = {
+  wind: '<path d="M3 8h11a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h8"/>',
+  snow: '<path d="M12 2v20M3.3 7l17.4 10M3.3 17L20.7 7M9 4l3 2 3-2M9 20l3-2 3 2M4 10.5l3.4-.6-1-3.3M20 13.5l-3.4.6 1 3.3M4 13.5l3.4.6-1 3.3M20 10.5l-3.4-.6 1-3.3"/>',
+  home: '<path d="M3 11l9-8 9 8v10h-6v-6H9v6H3z"/>',
+  waves:'<path d="M3 8c3-2 6 2 9 0s6-2 9 0M3 12c3-2 6 2 9 0s6-2 9 0M3 16c3-2 6 2 9 0s6-2 9 0"/>',
+  exit: '<path d="M14 4H5v16h9M10 12h11M17 8l4 4-4 4"/>',
+  sync: '<path d="M20 12a8 8 0 0 1-14 5.3M4 12a8 8 0 0 1 14-5.3M18 3v4h-4M6 21v-4h4"/>',
+  shuf: '<path d="M3 7h4c4 0 6 10 10 10h4M3 17h4c4 0 6-10 10-10h4M18 4l3 3-3 3M18 14l3 3-3 3"/>',
+  filt: '<path d="M4 5h16v14H4zM7 9h10M7 12h10M7 15h10"/>',
+  sun:  '<path d="M12 4V2M12 22v-2M4 12H2M22 12h-2M5.6 5.6 4.2 4.2M19.8 19.8l-1.4-1.4M5.6 18.4l-1.4 1.4M19.8 4.2l-1.4 1.4"/><circle cx="12" cy="12" r="4"/>',
+  lock: '<path d="M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4"/>',
+};
+const ico = (k, cls) => `<svg viewBox="0 0 24 24" class="ico ${cls || ''}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICO[k]}</svg>`;
+const fmtT = (v) => v === null ? '—' : v.toFixed(1).replace('.', ',') + '°C';
 
 // zrodla ramek w Diagnostyce (klucz 'ramka' = ostatnia dowolna)
 const FRAME_KEYS = ['ramka', 'r_nano_st', 'r_nano_nast', 'r_e3_3a', 'r_e3_3b', 'r_aero', 'r_bajty'];
 // encje, ktorych zmiany ida do logu zdarzen
 const LOG_KEYS = ['diag', 'alarm', 'status', 'magistrala', 'tryb', 'bieg', 'bypass', 'filtr', 'sezon', 'bypass_tryb',
-  'wietrzenie', 'urlop', 'poza_domem', 'went_aktywna', 'chlodzenie', 'nano_nadaje', 'aero_odp', 'kominek', 'gwc'];
+  'wietrzenie', 'urlop', 'poza_domem', 'went_aktywna', 'chlodzenie', 'nano_nadaje', 'aero_odp', 'kominek', 'gwc',
+  'status_went', 'harm_akt', 'nadawanie', 'inext'];
 
 const REKU_KEYS = ['t_czerpnia','t_nawiew','t_wywiew','t_wyrzutnia','t_pokoj','t_zadana','wilgotnosc','co2',
   'bieg','went_nawiew','went_wywiew','tryb','bypass','nagrzewnica','rozmrazanie','filtr','filtr_dni','alarm',
@@ -232,7 +275,14 @@ class CompitNanoOneCard extends HTMLElement {
   }
   _st(key) { return this._hass ? this._hass.states[this._id(key)] : undefined; }
   // "?" w nazwie encji z ESPHome = mapowanie niepewne
-  _unsure(id) { const s = this._hass && this._hass.states[id]; return !!(s && /\?/.test(s.attributes.friendly_name || '')); }
+  _unsure(id) {
+    const s = this._hass && this._hass.states[id];
+    if (!s) return false;
+    if (/\?/.test(s.attributes.friendly_name || '')) return true;
+    // v1.2: czerpnia i wywiew z rejestrow Nano - do potwierdzenia (wylacz: niepewne: [])
+    const list = Array.isArray(this._config.niepewne) ? this._config.niepewne : ['t_czerpnia', 't_wywiew'];
+    return list.some((k) => DEFAULT_E[k] && this._id(k) === id);
+  }
   _q(id) { return this._unsure(id) ? '<sup class="q" title="mapowanie niepewne (? w YAML)">?</sup>' : ''; }
   // encja diagnostyczna / konfiguracyjna (entity_category z rejestru HA, a bez niego po nazwie)
   _isDiag(id) {
@@ -259,6 +309,7 @@ class CompitNanoOneCard extends HTMLElement {
     const unit = s.attributes.unit_of_measurement !== undefined ? s.attributes.unit_of_measurement : DEFAULT_E[key][3];
     const v = num(s);
     if (s.entity_id.startsWith('binary_sensor.')) return s.state === 'on' ? 'TAK' : 'NIE';
+    if (s.entity_id.startsWith('switch.')) return s.state === 'on' ? 'WŁ.' : 'WYŁ.';
     if (v !== null && String(s.state).trim() !== '' && isFinite(Number(s.state))) {
       return esc(digits !== undefined ? v.toFixed(digits) : String(v)) + (unit ? '<small> ' + esc(unit) + '</small>' : '');
     }
@@ -345,12 +396,13 @@ class CompitNanoOneCard extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>${CSS}</style>
-      <ha-card>
+      <ha-card class="${this._config.theme === 'light' ? 'light' : 'dark'}">
         <div class="head">
-          <div class="title">${esc(this._config.title)}</div>
+          <div class="brand">${ico('wind', 'big')}<span class="sep"></span>
+            <div><div class="title">${esc(String(this._config.title).toUpperCase())}</div><div class="sub">COMPIT · C14</div></div></div>
           <div class="badges">
             ${alarmOn ? `<span class="badge err" data-e="${esc(this._id('alarm'))}">⚠ ${esc(alarm.state)}</span>` : ''}
-            <span class="badge ${online === null ? 'mute' : online ? 'ok' : 'err'}" data-e="${esc(this._id('status'))}">ESP ${online === null ? '?' : online ? 'online' : 'offline'}</span>
+            ${this._workBadge(online)}
           </div>
         </div>
         <div class="tabs">
@@ -373,8 +425,224 @@ class CompitNanoOneCard extends HTMLElement {
     if (cp) cp.addEventListener('click', () => this._copyFrames());
     this.shadowRoot.querySelectorAll('[data-rng]').forEach((b) => b.addEventListener('click', () => { this._logRange = Number(b.dataset.rng); this._fullText = ''; this._fullStat = ''; this._render(); }));
     this.shadowRoot.querySelectorAll('[data-full]').forEach((b) => b.addEventListener('click', () => this._fullLog(b.dataset.full)));
+    this.shadowRoot.querySelectorAll('[data-pop]').forEach((el) => el.addEventListener('click', () => { this._pop = this._pop === el.dataset.pop ? null : el.dataset.pop; this._render(); }));
+    this.shadowRoot.querySelectorAll('[data-popclose]').forEach((el) => el.addEventListener('click', () => { this._pop = null; this._render(); }));
+    this.shadowRoot.querySelectorAll('[data-opt]').forEach((el) => el.addEventListener('click', () => this._selectOpt(el.dataset.optkey, el.dataset.opt)));
+    this.shadowRoot.querySelectorAll('[data-num]').forEach((el) => el.addEventListener('click', () => this._numStep(el.dataset.num, Number(el.dataset.dir))));
+    this.shadowRoot.querySelectorAll('[data-wiet]').forEach((el) => el.addEventListener('click', () => {
+      const w = this._st('sw_wietrz'); if (!w) return;
+      this._call('switch', w.state === 'on' ? 'turn_off' : 'turn_on', { entity_id: w.entity_id }, 'Wietrzenie → ' + (w.state === 'on' ? 'WYŁ.' : 'WŁ.'));
+    }));
+    this.shadowRoot.querySelectorAll('[data-tx]').forEach((el) => el.addEventListener('click', () => {
+      const a = el.dataset.tx, n = this._st('nadawanie');
+      if (a === 'ask') this._confirmTx = true;
+      else if (a === 'no') this._confirmTx = false;
+      else if (a === 'yes' && n) {
+        this._confirmTx = false;
+        this._call('switch', n.state === 'on' ? 'turn_off' : 'turn_on', { entity_id: n.entity_id }, 'Nadawanie iNext → ' + (n.state === 'on' ? 'WYŁ.' : 'WŁ.'));
+      }
+      this._render();
+    }));
     const body = this.shadowRoot.querySelector('.body');
     if (body) body.scrollTop = sc;
+  }
+
+  // plakietka PRACA / WYBIEG / STOP / OFFLINE
+  _workBadge(online) {
+    let txt, cls, eid = this._id('status_went');
+    const sw = this._st('status_went'), wa = this._st('went_aktywna');
+    if (online === false) { txt = 'OFFLINE'; cls = 'err'; eid = this._id('status'); }
+    else if (sw && !BAD.includes(sw.state)) {
+      const v = sw.state.toLowerCase();
+      if (/prac/.test(v)) { txt = 'PRACA'; cls = 'ok'; }
+      else if (/wybieg/.test(v)) { txt = 'WYBIEG'; cls = 'warn'; }
+      else if (/stop|wył|wyl/.test(v)) { txt = 'STOP'; cls = 'mute'; }
+      else { txt = sw.state.toUpperCase(); cls = 'mute'; }
+    } else if (wa && !BAD.includes(wa.state)) { txt = wa.state === 'on' ? 'PRACA' : 'STOP'; cls = wa.state === 'on' ? 'ok' : 'mute'; eid = wa.entity_id; }
+    else if (online === null) { txt = 'ESP ?'; cls = 'mute'; eid = this._id('status'); }
+    else { txt = 'ONLINE'; cls = 'ok'; eid = this._id('status'); }
+    return `<span class="badge work ${cls}" data-e="${esc(eid)}"><i class="dot"></i>${esc(txt)}</span>`;
+  }
+
+  _running() {
+    const sw = this._st('status_went');
+    if (sw && !BAD.includes(sw.state)) return /prac|wybieg/i.test(sw.state);
+    const wa = this._st('went_aktywna');
+    if (wa && !BAD.includes(wa.state)) return wa.state === 'on';
+    const f = num(this._st('went_nawiew'));
+    return f !== null && f > 0;
+  }
+
+  // zapis dozwolony? (gdy jest przelacznik "Nadawanie iNext", musi byc WL)
+  _canWrite() {
+    const n = this._st('nadawanie');
+    if (!n) return true;
+    return n.state === 'on';
+  }
+
+  async _call(domain, service, data, label) {
+    if (!this._canWrite() && !(domain === 'switch' && data.entity_id === this._id('nadawanie'))) return;
+    this._pushLog({ t: new Date(), e: 'karta', s: 'Zapis: ' + label });
+    try { await this._hass.callService(domain, service, data); }
+    catch (e) { this._pushLog({ t: new Date(), e: 'karta', s: 'Błąd zapisu (' + label + '): ' + (e && e.message ? e.message : e) }); }
+    this._schedule();
+  }
+
+  _selectOpt(key, opt) {
+    const id = this._id(key);
+    this._pop = null;
+    this._call('select', 'select_option', { entity_id: id, option: opt }, DEFAULT_E[key][2] + ' → ' + opt);
+  }
+
+  _numStep(key, dir) {
+    const s = this._st(key);
+    if (!s || BAD.includes(s.state)) return;
+    const a = s.attributes, step = Number(a.step) || 1;
+    let v = Number(s.state) + dir * step;
+    if (a.min !== undefined) v = Math.max(Number(a.min), v);
+    if (a.max !== undefined) v = Math.min(Number(a.max), v);
+    v = Math.round(v / step) * step;
+    v = Number(v.toFixed(3));
+    this._call('number', 'set_value', { entity_id: s.entity_id, value: v }, DEFAULT_E[key][2] + ' → ' + v + (a.unit_of_measurement ? ' ' + a.unit_of_measurement : ''));
+  }
+
+  // ---------------- schemat wg wzoru ----------------
+  _renderHero(bypassOn) {
+    const run = this._running();
+    const tile = (key, x, y, icon, cls, label) => {
+      const id = this._id(key), s = this._st(key);
+      const v = num(s);
+      const q = this._unsure(id) ? '<tspan class="hq"> ?</tspan>' : '';
+      return `<g class="lnk" data-e="${esc(id)}">
+        <rect x="${x}" y="${y}" width="172" height="78" rx="14" class="htile"/>
+        <g transform="translate(${x + 14} ${y + 23}) scale(1.35)" class="${cls}"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICO[icon]}</g></g>
+        <line x1="${x + 58}" y1="${y + 18}" x2="${x + 58}" y2="${y + 60}" class="hsep"/>
+        <text x="${x + 70}" y="${y + 31}" class="hlbl">${label}${q}</text>
+        <text x="${x + 70}" y="${y + 61}" class="hval">${s && !BAD.includes(s.state) ? fmtT(v) : '—'}</text></g>`;
+    };
+    // osmiokat wymiennika
+    const cx = 320, cy = 150, R = 74;
+    const oct = Array.from({ length: 8 }, (_, i) => { const a = Math.PI / 8 + i * Math.PI / 4; return (cx + R * Math.cos(a)).toFixed(1) + ',' + (cy + R * Math.sin(a)).toFixed(1); }).join(' ');
+    const cold = bypassOn
+      ? 'M182 74 H214 C236 74 236 30 262 30 H378 C404 30 404 74 426 74 H458'
+      : 'M182 74 H214 C258 74 262 168 320 168 C378 168 382 74 426 74 H458';
+    const warm = 'M182 226 H214 C258 226 262 132 320 132 C378 132 382 226 426 226 H458';
+    const fan = (x, y) => `<g transform="translate(${x} ${y})"><circle r="25" class="hfan"/>
+      <g class="${run ? 'spin' : ''}" style="animation-duration:1.4s"><path d="M0 -17 C8 -15 7 -4 0 0 C-7 -4 -8 -15 0 -17Z M14.7 8.5 C10.5 15.5 1 11 0 0 C10 -1 17 3 14.7 8.5Z M-14.7 8.5 C-17 3 -10 -1 0 0 C-1 11 -10.5 15.5 -14.7 8.5Z" class="hblade"/></g><circle r="4" class="hhub"/></g>`;
+    const arrows = (x, y, cls) => `<text x="${x}" y="${y + 6}" text-anchor="middle" class="harr ${cls} ${run ? 'blink' : ''}">›››</text>`;
+    return `
+      <svg viewBox="0 0 640 300" class="hero" role="img" aria-label="Schemat rekuperatora">
+        <defs>
+          <filter id="glow" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          <pattern id="hatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(35)"><line x1="0" y1="0" x2="0" y2="9" class="hhatch"/></pattern>
+        </defs>
+        <rect x="212" y="12" width="216" height="270" rx="18" class="hunit"/>
+        <rect x="290" y="12" width="60" height="26" rx="4" class="hcap"/>
+        ${fan(262, 58)}${fan(378, 58)}
+        <polygon points="${oct}" class="hoct ${bypassOn ? 'byp' : ''}"/>
+        <polygon points="${oct}" fill="url(#hatch)" class="${bypassOn ? 'byp' : ''}"/>
+        <path d="${warm}" class="hs warm" filter="url(#glow)"/>
+        <path d="${cold}" class="hs cold" filter="url(#glow)"/>
+        ${run ? `<path d="${warm}" class="hflow"/><path d="${cold}" class="hflow"/>` : ''}
+        ${arrows(198, 74, 'cold')}${arrows(442, 74, 'cold')}${arrows(198, 226, 'warm')}${arrows(442, 226, 'warm')}
+        ${bypassOn ? '<text x="320" y="22" text-anchor="middle" class="hbyp">BYPASS</text>' : ''}
+        ${tile('t_czerpnia', 8, 35, 'snow', 'cold', 'CZERPNIA')}
+        ${tile('t_wywiew', 8, 187, 'home', 'warm', 'WYWIEW')}
+        ${tile('t_nawiew', 460, 35, 'waves', 'cold', 'NAWIEW')}
+        ${tile('t_wyrzutnia', 460, 187, 'exit', 'warm', 'WYRZUT')}
+      </svg>`;
+  }
+
+  _renderGauge() {
+    const b = this._st('bieg'), bc = this._st('bieg_centr');
+    const pct = num(this._st('went_nawiew'));
+    let bl = b && !BAD.includes(b.state) ? String(b.state) : '—';
+    if (/^\d+$/.test(bl)) bl = 'BIEG ' + bl; else bl = bl.toUpperCase();
+    const C = 2 * Math.PI * 38, p = pct === null ? 0 : Math.max(0, Math.min(100, pct));
+    const run = this._running();
+    const can = !!this._st('set_bieg');
+    return `<div class="gauge ${can ? 'click' : ''}" ${can ? 'data-pop="bieg"' : `data-e="${esc(this._id('bieg'))}"`}>
+      <svg viewBox="0 0 100 100" class="ring"><circle cx="50" cy="50" r="38" class="rbg"/>
+        <circle cx="50" cy="50" r="38" class="rfg" stroke-dasharray="${(C * p / 100).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 50 50)"/>
+        <g transform="translate(50 50)"><g class="${run ? 'spin' : ''}" style="animation-duration:2s"><path d="M0 -16 C7 -14 6 -4 0 0 C-6 -4 -7 -14 0 -16Z M13.9 8 C10 14.5 1 10.5 0 0 C9.5 -1 16 3 13.9 8Z M-13.9 8 C-16 3 -9.5 -1 0 0 C-1 10.5 -10 14.5 -13.9 8Z" class="rblade"/></g></g></svg>
+      <span class="gsep"></span>
+      <div><div class="glbl">${esc(bl)}</div><div class="gval">${pct === null ? '—' : Math.round(pct) + '%'}</div>
+        ${bc && !BAD.includes(bc.state) ? `<div class="gsub">centrala: bieg ${esc(bc.state)}${num(this._st('went_wywiew')) !== null ? ' · wywiew ' + Math.round(num(this._st('went_wywiew'))) + '%' : ''}</div>` : ''}
+        ${can ? '<div class="gsub">kliknij, by zmienić</div>' : ''}</div>
+    </div>`;
+  }
+
+  _renderBar() {
+    const st = (k) => { const s = this._st(k); return s && !BAD.includes(s.state) ? s.state : null; };
+    const prog = st('tryb'), byp = st('bypass_tryb'), sez = st('sezon'), filtr = st('filtr');
+    const bypOpen = this._st('bypass') && this._st('bypass').state === 'on';
+    const cell = (pop, key, icon, label, val, cls, pill) => {
+      const can = !!this._st(pop ? 'set_' + pop : '');
+      const attr = can ? `data-pop="${pop}"` : `data-e="${esc(this._id(key))}"`;
+      return `<div class="bcell ${can ? 'click' : ''} ${this._pop === pop ? 'open' : ''}" ${attr}>
+        ${pill ? `<span class="pill">${ico(icon)}<b>${esc(val || '—')}</b></span>` : `${ico(icon, cls)}<span class="bl">${label}</span> <b class="${cls}">${esc(val || '—')}</b>`}</div>`;
+    };
+    const filtrOk = filtr === null ? null : !/(wymie|brud|zabr|alarm|on|1)/i.test(filtr);
+    return `<div class="bar">
+      ${cell('program', 'tryb', 'sync', 'PROGRAM', prog ? prog.toUpperCase() : null, '', true)}
+      ${cell('bypass', 'bypass_tryb', 'shuf', 'BYPASS', (byp ? byp.toUpperCase() : (this._st('bypass') ? (bypOpen ? 'OTWARTY' : 'ZAMKNIĘTY') : null)) + (byp && bypOpen ? ' ·  OTW.' : ''), 'acc')}
+      ${cell('sezon', 'sezon', 'sun', 'SEZON', sez ? sez.toUpperCase() : null, 'acc')}
+      <div class="bcell" data-e="${esc(this._id('filtr'))}">${ico('filt', filtrOk === false ? 'bad' : 'good')}<span class="bl">FILTR</span> <b class="${filtrOk === null ? 'mute' : filtrOk ? 'good' : 'bad'}">${filtr === null ? '—' : filtrOk ? 'OK' : esc(filtr.toUpperCase())}</b></div>
+    </div>${this._renderPop()}`;
+  }
+
+  _renderPop() {
+    if (!this._pop) return '';
+    const key = 'set_' + this._pop;
+    const s = this._st(key);
+    if (!s) return '';
+    const opts = s.attributes.options || [];
+    const can = this._canWrite();
+    return `<div class="pop">
+      <div class="poph">${esc(DEFAULT_E[key][2])}: wybierz${can ? '' : ' <span class="warn">(zapis wyłączony, włącz „Nadawanie iNext”)</span>'}<button class="mini x" data-popclose>✕</button></div>
+      <div class="row">${opts.map((o) => `<button class="opt ${o === s.state ? 'on' : ''}" data-opt="${esc(o)}" data-optkey="${key}" ${can ? '' : 'disabled'}>${esc(o)}</button>`).join('')}</div>
+    </div>`;
+  }
+
+  _renderControls() {
+    const has = (k) => !!this._st(k);
+    const can = this._canWrite();
+    const numCtl = (k, digits) => {
+      if (!has(k)) return '';
+      const s = this._st(k), v = num(s), u = s.attributes.unit_of_measurement || DEFAULT_E[k][3];
+      return `<div class="nctl"><span class="nl" data-e="${esc(s.entity_id)}">${esc(DEFAULT_E[k][2])}</span>
+        <button class="pm" data-num="${k}" data-dir="-1" ${can ? '' : 'disabled'}>−</button>
+        <b class="nv">${v === null ? '—' : v.toFixed(digits).replace('.', ',')}<small> ${esc(u)}</small></b>
+        <button class="pm" data-num="${k}" data-dir="1" ${can ? '' : 'disabled'}>+</button></div>`;
+    };
+    const nadaw = this._st('nadawanie');
+    const wiet = this._st('sw_wietrz');
+    const temps = ['t_reczna', 't_dzien', 't_noc', 't_poza'].map((k) => numCtl(k, 1)).join('');
+    const pcts = [['p_n1', 'p_w1', 'Bieg 1'], ['p_n2', 'p_w2', 'Bieg 2'], ['p_n3', 'p_w3', 'Bieg 3'], ['p_nw', 'p_ww', 'Wietrzenie']]
+      .filter(([a, b]) => has(a) || has(b))
+      .map(([a, b, l]) => `<tr><td>${l}</td><td>${this._pctCell(a, can)}</td><td>${this._pctCell(b, can)}</td></tr>`).join('');
+    if (!nadaw && !wiet && !temps && !pcts) return '';
+    let lock = '';
+    if (nadaw) {
+      const on = nadaw.state === 'on';
+      lock = `<div class="lock ${on ? 'on' : ''}">${ico('lock')}<span>Nadawanie iNext: <b>${on ? 'WŁ. – zapis do Nano aktywny' : 'WYŁ. – zapis wyłączony'}</b></span>
+        ${this._confirmTx ? `<span class="warn">Na pewno ${on ? 'wyłączyć' : 'włączyć'}?</span><button class="mini" data-tx="yes">Tak</button><button class="mini" data-tx="no">Nie</button>`
+          : `<button class="mini" data-tx="ask">${on ? 'Wyłącz' : 'Włącz'}</button>`}</div>`;
+    }
+    return `<div class="ctl">
+      <h3 class="rest">Sterowanie</h3>
+      ${lock}
+      ${wiet ? `<div class="row"><button class="opt ${wiet.state === 'on' ? 'on' : ''}" data-wiet ${can ? '' : 'disabled'}>${ico('wind')} Wietrzenie: ${wiet.state === 'on' ? 'WŁ.' : 'WYŁ.'}</button></div>` : ''}
+      ${temps ? `<div class="sublbl">Temperatury zadane</div><div class="nwrap">${temps}</div>` : ''}
+      ${pcts ? `<div class="sublbl">Biegi % (nawiew / wywiew)</div><table class="ptab"><tr><th></th><th>Nawiew</th><th>Wywiew</th></tr>${pcts}</table>` : ''}
+    </div>`;
+  }
+
+  _pctCell(k, can) {
+    const s = this._st(k);
+    if (!s) return '<span class="mute">—</span>';
+    const v = num(s);
+    return `<span class="pc"><button class="pm" data-num="${k}" data-dir="-1" ${can ? '' : 'disabled'}>−</button><b data-e="${esc(s.entity_id)}">${v === null ? '—' : Math.round(v) + '%'}</b><button class="pm" data-num="${k}" data-dir="1" ${can ? '' : 'disabled'}>+</button></span>`;
   }
 
   // ---------------- zakladka Rekuperator ----------------
@@ -385,45 +653,7 @@ class CompitNanoOneCard extends HTMLElement {
     const bypassOn = this._st('bypass') && this._st('bypass').state === 'on';
     const fN = num(this._st('went_nawiew')), fW = num(this._st('went_wywiew'));
     const spin = (v) => v === null ? 0 : v <= 0 ? 0 : Math.max(0.4, 3 - v / 50);
-    const tLbl = (key, x, y, anchor) => {
-      const id = this._id(key);
-      const v = num(this._st(key));
-      return `<g class="lnk" data-e="${esc(id)}"><text x="${x}" y="${y}" text-anchor="${anchor}" class="tl">${esc(DEFAULT_E[key][2])}${this._unsure(id) ? ' (?)' : ''}</text>
-        <text x="${x}" y="${y + 24}" text-anchor="${anchor}" class="tv">${v === null ? '—' : v.toFixed(1) + '°'}</text></g>`;
-    };
-    const fan = (cx, cy, v, key) => {
-      const s = spin(v);
-      return `<g class="lnk" data-e="${esc(this._id(key))}" transform="translate(${cx} ${cy})">
-        <circle r="17" class="fanring"/>
-        <g class="${s ? 'spin' : ''}" style="animation-duration:${s}s">
-          <path d="M0 -13 C6 -12 6 -3 0 0 C-6 -3 -6 -12 0 -13Z M13 0 C12 6 3 6 0 0 C3 -6 12 -6 13 0Z M0 13 C-6 12 -6 3 0 0 C6 3 6 12 0 13Z M-13 0 C-12 -6 -3 -6 0 0 C-3 6 -12 6 -13 0Z" class="blade"/>
-        </g>
-        <text y="33" text-anchor="middle" class="fv">${v === null ? '—' : Math.round(v) + '%'}</text></g>`;
-    };
 
-    const svg = `
-      <svg viewBox="0 0 420 230" class="schema" role="img" aria-label="Schemat rekuperatora">
-        <defs>
-          <marker id="ah" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
-        </defs>
-        <rect x="110" y="40" width="200" height="150" rx="14" class="unit"/>
-        <!-- wymiennik -->
-        <polygon points="210,60 265,115 210,170 155,115" class="hx ${bypassOn ? 'byp' : ''}"/>
-        <!-- swieze: czerpnia (L-gora) -> nawiew (P-dol) -->
-        <path d="M20 70 H120 L155 105 ${bypassOn ? 'L265 105' : 'L265 125'} L300 160 H400" class="air cold" marker-end="url(#ah)"/>
-        <!-- zuzyte: wywiew (P-gora) -> wyrzutnia (L-dol) -->
-        <path d="M400 70 H300 L265 105 L155 125 L120 160 H20" class="air warm" marker-end="url(#ah)"/>
-        ${tLbl('t_czerpnia', 12, 32, 'start')}
-        ${tLbl('t_wyrzutnia', 12, 188, 'start')}
-        ${tLbl('t_wywiew', 408, 32, 'end')}
-        ${tLbl('t_nawiew', 408, 188, 'end')}
-        ${fan(340, 160, fN, 'went_nawiew')}
-        ${fan(80, 160, fW, 'went_wywiew')}
-        <text x="210" y="208" text-anchor="middle" class="tl">${bypassOn ? 'BYPASS otwarty' : 'odzysk ciepła'}</text>
-        <text x="210" y="92" text-anchor="middle" class="eff">${eff === null ? '' : Math.round(eff) + '%'}</text>
-        <text x="20" y="228" class="lg cold">● powietrze świeże</text>
-        <text x="400" y="228" text-anchor="end" class="lg warm">● powietrze zużyte</text>
-      </svg>`;
 
     const tile = (key, digits, big) => {
       const id = this._id(key);
@@ -450,8 +680,11 @@ class CompitNanoOneCard extends HTMLElement {
     const nast = ['n_komfort', 'n_eko', 'n_chlodzenie', 'n_reczna', 'n_poza'].map((k) => opt(k, 1)).join('')
       + ['zad_nawiew', 'zad_wywiew', 'aero_moc'].map((k) => opt(k, 0)).join('');
     return `
-      ${svg}
-      <div class="flags">${optFlag('went_aktywna')}${flag('bypass')}${optFlag('bypass_tryb')}${optFlag('sezon')}${optFlag('chlodzenie')}${optFlag('wietrzenie')}${optFlag('urlop')}${optFlag('poza_domem')}${optFlag('nagrzewnica')}${optFlag('rozmrazanie')}${optFlag('gwc')}${optFlag('kominek')}${optFlag('magistrala')}
+      ${this._renderHero(bypassOn)}
+      ${this._renderGauge()}
+      ${this._renderBar()}
+      ${this._renderControls()}
+      <div class="flags">${optFlag('harm_akt')}${optFlag('went_aktywna')}${flag('bypass')}${optFlag('bypass_tryb')}${optFlag('sezon')}${optFlag('chlodzenie')}${optFlag('wietrzenie')}${optFlag('urlop')}${optFlag('poza_domem')}${optFlag('nagrzewnica')}${optFlag('rozmrazanie')}${optFlag('gwc')}${optFlag('kominek')}${optFlag('magistrala')}
         ${filtr ? `<span class="flag ${filtrWarn ? 'err' : ''}" data-e="${esc(this._id('filtr'))}">Filtry: ${!BAD.includes(filtr.state) ? esc(filtr.state) : '—'}</span>` : ''}</div>
       <div class="grid">
         ${tile('bieg', undefined, true)}${tile('tryb', undefined, true)}
@@ -507,7 +740,7 @@ class CompitNanoOneCard extends HTMLElement {
         ${opt('ramki_suma')}${opt('ramki_urwane')}
         ${row('ramki_min')}
         ${opt('bajty')}${opt('bajty_b7')}${opt('nano_nadaje')}${opt('aero_odp')}
-        ${opt('typy')}${opt('zegar')}
+        ${opt('typy')}${opt('zegar')}${opt('ramki_tx')}${opt('inext')}${opt('nadawanie')}
         ${lastFrameT ? `<tr><td>Ostatnia ramka</td><td>${hhmmss(lastFrameT)}</td></tr>` : ''}
         ${row('adresy', this._fmtAddrs())}
       </table>`;
@@ -729,8 +962,89 @@ class CompitNanoOneCard extends HTMLElement {
 }
 
 const CSS = `
+  ha-card.dark { --primary-text-color:#e9eef5; --secondary-text-color:#8d9aab; --secondary-background-color:#18202b; --divider-color:#263140;
+    --card-background-color:#111821; --primary-color:#27b4ff; --success-color:#3ddc6f; --warning-color:#ffb020; --error-color:#ff5a4f;
+    --ha-card-background:#111821; background:linear-gradient(180deg,#141c26,#0d131a); color:var(--primary-text-color); border:1px solid #233040; border-radius:18px; }
+  .brand { display:flex; align-items:center; gap:12px; }
+  .ico { width:20px; height:20px; vertical-align:middle; flex:none; }
+  .ico.big { width:38px; height:38px; color:#27b4ff; }
+  .sep { width:1px; height:36px; background:var(--divider-color); }
+  .dark .title { font-size:1.45em; font-weight:800; letter-spacing:.5px; }
+  .sub { font-size:.85em; color:var(--secondary-text-color); letter-spacing:1px; }
+  .badge.work { display:inline-flex; align-items:center; gap:8px; font-weight:800; font-size:.95em; padding:6px 16px; border-radius:20px; border:2px solid currentColor; background:transparent; letter-spacing:.5px; }
+  .badge.work.ok { color:var(--success-color,#2e9e4f); background:rgba(61,220,111,.1); box-shadow:0 0 12px rgba(61,220,111,.25); }
+  .badge.work.warn { color:var(--warning-color,#ffa600); }
+  .badge.work.err { color:var(--error-color,#db4437); }
+  .badge.work.mute { color:var(--secondary-text-color); }
+  .badge .dot { width:9px; height:9px; border-radius:50%; background:currentColor; }
+  .hero { width:100%; display:block; margin-top:4px; }
+  .htile { fill:var(--secondary-background-color); stroke:var(--divider-color); stroke-width:1.5; }
+  .hsep { stroke:var(--divider-color); stroke-width:1.5; }
+  .hlbl { font-size:13px; font-weight:700; letter-spacing:1px; fill:var(--primary-text-color); }
+  .hval { font-size:25px; font-weight:800; fill:var(--primary-text-color); }
+  .hq { fill:var(--warning-color); }
+  g.cold, text.cold { color:#27b4ff; fill:#27b4ff; } g.warm, text.warm { color:#ffa43a; fill:#ffa43a; }
+  .hunit { fill:#1a222d; stroke:#2c3848; stroke-width:2; }
+  .light .hunit { fill:var(--secondary-background-color); stroke:var(--divider-color); }
+  .hcap { fill:#2c3848; }
+  .hfan { fill:#121921; stroke:#34414f; stroke-width:3; }
+  .light .hfan { fill:var(--card-background-color,#fff); stroke:var(--divider-color); }
+  .hblade { fill:#5d6b7b; } .hhub { fill:#8d9aab; }
+  .hoct { fill:#3a4553; stroke:#7b8796; stroke-width:3; }
+  .hhatch { stroke:#566271; stroke-width:2.2; }
+  .hoct.byp, polygon.byp { opacity:.35; }
+  .hs { fill:none; stroke-width:16; stroke-linecap:round; stroke-linejoin:round; opacity:.85; }
+  .hs.cold { stroke:#1e9bff; } .hs.warm { stroke:#ff9a2a; }
+  .hflow { fill:none; stroke:#fff; stroke-width:3; stroke-linecap:round; stroke-dasharray:2 16; opacity:.45; animation:flow 1.2s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset:-18; } }
+  .harr { font-size:20px; font-weight:900; fill:#fff; opacity:.9; }
+  .blink { animation:blink 1.6s ease-in-out infinite; }
+  @keyframes blink { 50% { opacity:.35; } }
+  .hbyp { font-size:12px; font-weight:800; letter-spacing:1px; fill:#27b4ff; }
+  .gauge { display:flex; align-items:center; justify-content:center; gap:16px; margin:2px 0 10px; }
+  .gauge.click { cursor:pointer; }
+  .ring { width:96px; height:96px; }
+  .rbg { fill:none; stroke:#2a3442; stroke-width:9; }
+  .light .rbg { stroke:var(--divider-color); }
+  .rfg { fill:none; stroke:#27b4ff; stroke-width:9; stroke-linecap:round; filter:drop-shadow(0 0 5px rgba(39,180,255,.6)); transition:stroke-dasharray .6s; }
+  .rblade { fill:#9aa7b6; }
+  .gsep { width:1px; height:64px; background:var(--divider-color); }
+  .glbl { font-size:1.15em; font-weight:700; letter-spacing:1px; color:var(--secondary-text-color); }
+  .gval { font-size:2.6em; font-weight:800; line-height:1; }
+  .gsub { font-size:.75em; color:var(--secondary-text-color); margin-top:4px; }
+  .bar { display:grid; grid-template-columns:repeat(4,1fr); border-top:1px solid var(--divider-color); padding-top:10px; margin-top:4px; }
+  .bcell { display:flex; align-items:center; justify-content:center; gap:6px; padding:8px 4px; font-size:.95em; border-left:1px solid var(--divider-color); cursor:pointer; flex-wrap:wrap; text-align:center; }
+  .bcell:first-child { border-left:none; }
+  .bcell.open { background:var(--secondary-background-color); border-radius:10px; }
+  .bl { font-weight:600; letter-spacing:.5px; }
+  .bcell b.acc { color:#27b4ff; } .good { color:var(--success-color,#2e9e4f); } .bad { color:var(--error-color,#db4437); }
+  .pill { display:inline-flex; align-items:center; gap:8px; padding:7px 18px; border-radius:22px; background:linear-gradient(180deg,#1f8fff,#1468d8); color:#fff; box-shadow:0 0 14px rgba(31,143,255,.45); }
+  @media (max-width:520px) { .bar { grid-template-columns:repeat(2,1fr); } .bcell:nth-child(3) { border-left:none; } }
+  .pop { margin-top:8px; padding:10px 12px; border-radius:12px; background:var(--secondary-background-color); border:1px solid var(--divider-color); }
+  .poph { font-size:.85em; margin-bottom:8px; display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .poph .x { margin-left:auto; }
+  .opt { font:inherit; font-size:.9em; padding:7px 14px; border-radius:18px; border:1px solid var(--divider-color); background:transparent; color:var(--primary-text-color); cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
+  .opt.on { border-color:var(--primary-color); color:var(--primary-color); background:rgba(39,180,255,.12); }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  .ctl { margin-top:6px; }
+  .lock { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 12px; border-radius:10px; background:rgba(255,176,32,.12); font-size:.88em; margin-bottom:8px; }
+  .lock.on { background:rgba(61,220,111,.12); }
+  .sublbl { font-size:.8em; color:var(--secondary-text-color); margin:10px 0 6px; letter-spacing:.5px; text-transform:uppercase; }
+  .nwrap { display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:6px; }
+  .nctl { display:flex; align-items:center; gap:8px; background:var(--secondary-background-color); border-radius:10px; padding:6px 10px; }
+  .nctl .nl { flex:1; font-size:.88em; color:var(--secondary-text-color); cursor:pointer; }
+  .nv { min-width:70px; text-align:center; }
+  .pm { font:inherit; font-weight:700; width:30px; height:30px; border-radius:50%; border:1px solid var(--divider-color); background:transparent; color:var(--primary-text-color); cursor:pointer; }
+  .pm:not(:disabled):hover { border-color:var(--primary-color); color:var(--primary-color); }
+  .ptab { width:100%; border-collapse:collapse; font-size:.9em; }
+  .ptab th { font-weight:500; color:var(--secondary-text-color); text-align:center; padding:4px; }
+  .ptab td { padding:4px; border-top:1px solid var(--divider-color); text-align:center; }
+  .ptab td:first-child { text-align:left; color:var(--secondary-text-color); }
+  .pc { display:inline-flex; align-items:center; gap:8px; }
+  .pc b { min-width:42px; display:inline-block; cursor:pointer; }
+  @media (max-width:420px) { .pm { width:26px; height:26px; } .pc { gap:4px; } .pc b { min-width:36px; } .ptab td, .ptab th { padding:3px 1px; } .body { padding:10px 10px; } }
   :host { display:block; }
-  ha-card { overflow:hidden; }
+  ha-card { overflow:hidden; display:block; }
   .head { display:flex; align-items:center; justify-content:space-between; padding:14px 16px 6px; gap:8px; flex-wrap:wrap; }
   .title { font-size:1.25em; font-weight:500; color:var(--primary-text-color); }
   .badges { display:flex; gap:6px; flex-wrap:wrap; }
