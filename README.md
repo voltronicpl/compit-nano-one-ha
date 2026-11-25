@@ -5,6 +5,8 @@ Jeden plik JS, bez zależności (nie wymaga button-card, card-mod ani apexcharts
 
 ![podgląd](docs/podglad.png)
 
+![diagnostyka](docs/podglad_diagnostyka.png)
+
 Podgląd jest zrobiony na przykładowych wartościach.
 
 ## Co jest w karcie
@@ -79,6 +81,24 @@ Surowa ramka (`ostatnia_ramka`) to tekst HEX, np. `A9 10 35 63 … 23`. Może by
 | `sprawnosc` | `sensor.<prefix>_sprawnosc_odzysku` | Sprawność odzysku |
 | `godziny_pracy` | `sensor.<prefix>_godziny_pracy` | Godziny pracy |
 | `wersja_nano` | `sensor.<prefix>_wersja_nano_one` | Wersja Nano One |
+| `sezon` | `sensor.<prefix>_sezon` | Sezon |
+| `sezon_rej` | `sensor.<prefix>_sezon_rejestr` | Sezon (rejestr) |
+| `bypass_tryb` | `sensor.<prefix>_bypass_tryb` | Bypass tryb |
+| `bypass_rej` | `sensor.<prefix>_bypass_rejestr` | Bypass (rejestr) |
+| `wietrzenie` | `sensor.<prefix>_wietrzenie` | Wietrzenie |
+| `urlop` | `sensor.<prefix>_urlop` | Urlop |
+| `poza_domem` | `sensor.<prefix>_poza_domem` | Poza domem |
+| `tryb_term` | `sensor.<prefix>_tryb_termostatu_rejestr` | Tryb termostatu |
+| `went_aktywna` | `binary_sensor.<prefix>_wentylacja_aktywna` | Wentylacja |
+| `chlodzenie` | `binary_sensor.<prefix>_zapotrzebowanie_na_chlodzenie` | Chłodzenie |
+| `n_komfort` | `sensor.<prefix>_nastawa_komfort` | Komfort |
+| `n_eko` | `sensor.<prefix>_nastawa_eko` | Eko |
+| `n_chlodzenie` | `sensor.<prefix>_nastawa_chlodzenie` | Chłodzenie |
+| `n_reczna` | `sensor.<prefix>_nastawa_reczna` | Ręczna |
+| `n_poza` | `sensor.<prefix>_nastawa_poza_domem` | Poza domem |
+| `aero_moc` | `sensor.<prefix>_aero_moc_centrali` | Moc centrali AERO |
+| `zad_nawiew` | `sensor.<prefix>_wentylacja_nawiew_zadany` | Nawiew zadany |
+| `zad_wywiew` | `sensor.<prefix>_wentylacja_wywiew_zadany` | Wywiew zadany |
 | `status` | `binary_sensor.<prefix>_status` | ESP online |
 | `wifi` | `sensor.<prefix>_wifi_sygnal` | WiFi sygnał |
 | `uptime` | `sensor.<prefix>_czas_pracy` | Czas pracy ESP |
@@ -93,11 +113,29 @@ Surowa ramka (`ostatnia_ramka`) to tekst HEX, np. `A9 10 35 63 … 23`. Może by
 | `ramka_wiek` | `sensor.<prefix>_wiek_ostatniej_ramki` | Od ostatniej ramki |
 | `adresy` | `sensor.<prefix>_wykryte_adresy` | Wykryte adresy C14 |
 | `magistrala` | `binary_sensor.<prefix>_magistrala_c14` | Magistrala C14 |
+| `bajty` | `sensor.<prefix>_bajty_rs485` | Bajty RS485 |
+| `bajty_b7` | `sensor.<prefix>_bajty_z_bitem_7` | Bajty z bitem 7 |
+| `ramki_suma` | `sensor.<prefix>_ramki_zla_suma` | Ramki: zła suma |
+| `ramki_urwane` | `sensor.<prefix>_ramki_urwane` | Ramki urwane |
+| `nano_nadaje` | `binary_sensor.<prefix>_nano_nadaje` | Nano nadaje |
+| `aero_odp` | `binary_sensor.<prefix>_aero_odpowiada` | AERO odpowiada |
+| `typy` | `sensor.<prefix>_c14_typy_ramek` | Typy ramek C14 |
+| `zegar` | `sensor.<prefix>_zegar_nano` | Zegar Nano |
+| `rejestry` | `sensor.<prefix>_c14_rejestry_nano` | Rejestry Nano |
+| `r_nano_st` | `sensor.<prefix>_c14_ramka_nano_status` | Nano status |
+| `r_nano_nast` | `sensor.<prefix>_c14_ramka_nano_nastawy` | Nano nastawy |
+| `r_e3_3a` | `sensor.<prefix>_c14_ramka_e3_strona_3a` | E3 3A |
+| `r_e3_3b` | `sensor.<prefix>_c14_ramka_e3_strona_3b` | E3 3B |
+| `r_aero` | `sensor.<prefix>_c14_ramka_aero` | AERO |
+| `r_bajty` | `sensor.<prefix>_surowe_bajty` | Surowe bajty |
 
-Kafle encji, których nie ma w HA (np. filtry, alarm, CO₂ w YAML v1.0), są ukryte i pojawią się same, jak dojdą do YAML-a. Tekstowe encje (np. `gwc`, `kominek`) pokazują się jako plakietki ze stanem.
+Kafle encji, których nie ma w HA (np. filtry, alarm, CO₂ w YAML v1.3), są ukryte i pojawią się same, jak dojdą do YAML-a. Tekstowe encje (np. `gwc`, `kominek`, `sezon`) pokazują się jako plakietki ze stanem. Encje z „?” w nazwie w YAML-u (mapowanie niepewne) mają pomarańczowy znak **?** na kaflach i „(?)” na schemacie.
+
+Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają do „Pozostałe z ESP” na Rekuperatorze. Są w Diagnostyce, w sekcjach **Surowe pola C14**, **Rejestry Nano**, **Parametry serwisowe** i **Ustawienia ESP**.
 
 ## Wersje
 
+- **v1.1** – pod YAML v1.3: plakietki (wentylacja, bypass tryb, sezon, chłodzenie, wietrzenie, urlop, poza domem), sekcja Nastawy, znacznik „?” dla niepewnych encji, encje diagnostyczne przeniesione do Diagnostyki (surowe pola C14, rejestry, serwis, ustawienia ESP), wszystkie ramki C14 (Nano status/nastawy, E3 3A/3B, AERO, surowe bajty) z przełącznikiem źródła, więcej liczników magistrali.
 - **v1.0** – pierwsza wersja: zakładki Rekuperator i Diagnostyka, kopiowanie i pobieranie całego logu, dekoder ramek C14, automatyczne kafle dla nieznanych encji.
 
 Kod ESPHome (YAML) nie jest w tym repo.

@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v1.0
+ * compit-nano-one-card  v1.1
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -15,7 +15,7 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v1.0';
+const VERSION = 'v1.1';
 
 // klucz: [domena, koncowka, opis, jednostka zapasowa]
 const DEFAULT_E = {
@@ -51,6 +51,26 @@ const DEFAULT_E = {
   sprawnosc:    ['sensor', 'sprawnosc_odzysku',          'Sprawność odzysku','%'],
   godziny_pracy:['sensor', 'godziny_pracy',              'Godziny pracy',    'h'],
   wersja_nano:  ['sensor', 'wersja_nano_one',            'Wersja Nano One',  ''],
+  // v1.1: stany i tryby z YAML v1.3
+  sezon:        ['sensor', 'sezon',                      'Sezon',            ''],
+  sezon_rej:    ['sensor', 'sezon_rejestr',              'Sezon (rejestr)',  ''],
+  bypass_tryb:  ['sensor', 'bypass_tryb',                'Bypass tryb',      ''],
+  bypass_rej:   ['sensor', 'bypass_rejestr',             'Bypass (rejestr)', ''],
+  wietrzenie:   ['sensor', 'wietrzenie',                 'Wietrzenie',       ''],
+  urlop:        ['sensor', 'urlop',                      'Urlop',            ''],
+  poza_domem:   ['sensor', 'poza_domem',                 'Poza domem',       ''],
+  tryb_term:    ['sensor', 'tryb_termostatu_rejestr',    'Tryb termostatu',  ''],
+  went_aktywna: ['binary_sensor', 'wentylacja_aktywna',  'Wentylacja',       ''],
+  chlodzenie:   ['binary_sensor', 'zapotrzebowanie_na_chlodzenie', 'Chłodzenie', ''],
+  // v1.1: nastawy
+  n_komfort:    ['sensor', 'nastawa_komfort',            'Komfort',          '°C'],
+  n_eko:        ['sensor', 'nastawa_eko',                'Eko',              '°C'],
+  n_chlodzenie: ['sensor', 'nastawa_chlodzenie',         'Chłodzenie',       '°C'],
+  n_reczna:     ['sensor', 'nastawa_reczna',             'Ręczna',           '°C'],
+  n_poza:       ['sensor', 'nastawa_poza_domem',         'Poza domem',       '°C'],
+  aero_moc:     ['sensor', 'aero_moc_centrali',          'Moc centrali AERO','%'],
+  zad_nawiew:   ['sensor', 'wentylacja_nawiew_zadany',   'Nawiew zadany',    '%'],
+  zad_wywiew:   ['sensor', 'wentylacja_wywiew_zadany',   'Wywiew zadany',    '%'],
   // --- diagnostyka ESP ---
   status:       ['binary_sensor', 'status',              'ESP online',       ''],
   wifi:         ['sensor', 'wifi_sygnal',                'WiFi sygnał',      'dBm'],
@@ -67,7 +87,30 @@ const DEFAULT_E = {
   ramka_wiek:   ['sensor', 'wiek_ostatniej_ramki',       'Od ostatniej ramki', 's'],
   adresy:       ['sensor', 'wykryte_adresy',             'Wykryte adresy C14', ''],
   magistrala:   ['binary_sensor', 'magistrala_c14',      'Magistrala C14',   ''],
+  // v1.1: liczniki i stan magistrali
+  bajty:        ['sensor', 'bajty_rs485',                'Bajty RS485',      ''],
+  bajty_b7:     ['sensor', 'bajty_z_bitem_7',            'Bajty z bitem 7',  ''],
+  ramki_suma:   ['sensor', 'ramki_zla_suma',             'Ramki: zła suma',  ''],
+  ramki_urwane: ['sensor', 'ramki_urwane',               'Ramki urwane',     ''],
+  nano_nadaje:  ['binary_sensor', 'nano_nadaje',         'Nano nadaje',      ''],
+  aero_odp:     ['binary_sensor', 'aero_odpowiada',      'AERO odpowiada',   ''],
+  typy:         ['sensor', 'c14_typy_ramek',             'Typy ramek C14',   ''],
+  zegar:        ['sensor', 'zegar_nano',                 'Zegar Nano',       ''],
+  rejestry:     ['sensor', 'c14_rejestry_nano',          'Rejestry Nano',    ''],
+  // v1.1: surowe ramki (kazda ma swoja zakladke w Diagnostyce)
+  r_nano_st:    ['sensor', 'c14_ramka_nano_status',      'Nano status',      ''],
+  r_nano_nast:  ['sensor', 'c14_ramka_nano_nastawy',     'Nano nastawy',     ''],
+  r_e3_3a:      ['sensor', 'c14_ramka_e3_strona_3a',     'E3 3A',            ''],
+  r_e3_3b:      ['sensor', 'c14_ramka_e3_strona_3b',     'E3 3B',            ''],
+  r_aero:       ['sensor', 'c14_ramka_aero',             'AERO',             ''],
+  r_bajty:      ['sensor', 'surowe_bajty',               'Surowe bajty',     ''],
 };
+
+// zrodla ramek w Diagnostyce (klucz 'ramka' = ostatnia dowolna)
+const FRAME_KEYS = ['ramka', 'r_nano_st', 'r_nano_nast', 'r_e3_3a', 'r_e3_3b', 'r_aero', 'r_bajty'];
+// encje, ktorych zmiany ida do logu zdarzen
+const LOG_KEYS = ['diag', 'alarm', 'status', 'magistrala', 'tryb', 'bieg', 'bypass', 'filtr', 'sezon', 'bypass_tryb',
+  'wietrzenie', 'urlop', 'poza_domem', 'went_aktywna', 'chlodzenie', 'nano_nadaje', 'aero_odp', 'kominek', 'gwc'];
 
 const REKU_KEYS = ['t_czerpnia','t_nawiew','t_wywiew','t_wyrzutnia','t_pokoj','t_zadana','wilgotnosc','co2',
   'bieg','went_nawiew','went_wywiew','tryb','bypass','nagrzewnica','rozmrazanie','filtr','filtr_dni','alarm',
@@ -188,6 +231,25 @@ class CompitNanoOneCard extends HTMLElement {
     return id;
   }
   _st(key) { return this._hass ? this._hass.states[this._id(key)] : undefined; }
+  // "?" w nazwie encji z ESPHome = mapowanie niepewne
+  _unsure(id) { const s = this._hass && this._hass.states[id]; return !!(s && /\?/.test(s.attributes.friendly_name || '')); }
+  _q(id) { return this._unsure(id) ? '<sup class="q" title="mapowanie niepewne (? w YAML)">?</sup>' : ''; }
+  // encja diagnostyczna / konfiguracyjna (entity_category z rejestru HA, a bez niego po nazwie)
+  _isDiag(id) {
+    if (/^(select|switch|number|text|button)\./.test(id)) return true;
+    const reg = this._hass.entities && this._hass.entities[id];
+    if (reg && reg.entity_category) return true;
+    if (reg) return false;
+    return /_(c14_|aero_t\d|bieg_\d_|nawiew_bieg|wywiew_bieg|nawiew_wietrzenie|wywiew_wietrzenie|prog_|histereza|blokada|min_temp|metoda_)/.test(id) || /\(serwis\)/.test((this._hass.states[id].attributes.friendly_name || ''));
+  }
+  _prefIds() {
+    const pre = this._prefix + '_';
+    return Object.keys(this._hass.states).filter((id) => { const o = id.split('.')[1]; return o && o.startsWith(pre); }).sort();
+  }
+  _shortName(id) {
+    const s = this._hass.states[id];
+    return (s.attributes.friendly_name || id).replace(new RegExp('^' + this._prefix.replace(/_/g, '[ _]') + '\\s*', 'i'), '');
+  }
   _has(key) { const s = this._st(key); return !!s && !BAD.includes(s.state); }
 
   _val(key, digits) {
@@ -208,12 +270,12 @@ class CompitNanoOneCard extends HTMLElement {
     this._hass = hass;
     // log zdarzen i ramek zbierany na zywo, gdy karta jest otwarta
     const now = new Date();
-    for (const key of ['diag', 'ramka', 'alarm', 'status', 'magistrala', 'tryb', 'bieg', 'bypass', 'filtr']) {
+    for (const key of LOG_KEYS.concat(FRAME_KEYS)) {
       const s = hass.states[this._id(key)];
       const st = s ? s.state : undefined;
       if (this._last[key] !== undefined && st !== this._last[key] && st !== undefined) {
         const t = s.last_changed ? new Date(s.last_changed) : now;
-        if (key === 'ramka') this._pushFrame({ t, s: st });
+        if (FRAME_KEYS.includes(key)) this._pushFrame({ t, s: st, k: key });
         else this._pushLog({ t, e: key, s: st });
       }
       this._last[key] = st;
@@ -225,15 +287,15 @@ class CompitNanoOneCard extends HTMLElement {
   _pushLog(x) { this._log.push(x); this._log.sort((a, b) => a.t - b.t); if (this._log.length > 300) this._log.splice(0, this._log.length - 300); }
   _pushFrame(x) {
     if (BAD.includes(x.s)) return;
-    if (this._frames.length && this._frames[this._frames.length - 1].s === x.s && Math.abs(this._frames[this._frames.length - 1].t - x.t) < 500) return;
+    if (this._frames.some((f) => f.k === x.k && f.s === x.s && Math.abs(f.t - x.t) < 500)) return;
     this._frames.push(x); this._frames.sort((a, b) => a.t - b.t);
-    if (this._frames.length > 200) this._frames.splice(0, this._frames.length - 200);
+    if (this._frames.length > 600) this._frames.splice(0, this._frames.length - 600);
   }
 
   async _loadHistory() {
     if (this._histLoaded || !this._hass || !this._hass.callApi) return;
     this._histLoaded = true;
-    const keys = ['diag', 'alarm', 'status', 'magistrala', 'tryb', 'bieg', 'bypass', 'filtr', 'ramka'];
+    const keys = LOG_KEYS.concat(FRAME_KEYS);
     const ids = keys.map((k) => this._id(k)).filter((id) => this._hass.states[id]);
     if (!ids.length) return;
     const start = new Date(Date.now() - (Number(this._config.history_hours) || 6) * 3600e3).toISOString();
@@ -246,7 +308,7 @@ class CompitNanoOneCard extends HTMLElement {
         arr.forEach((h, i) => {
           if (i === 0) return; // pierwszy wpis = stan na poczatku okna, nie zmiana
           const t = new Date(h.last_changed || h.lu * 1000);
-          if (key === 'ramka') this._pushFrame({ t, s: h.state || h.s });
+          if (FRAME_KEYS.includes(key)) this._pushFrame({ t, s: h.state || h.s, k: key });
           else this._pushLog({ t, e: key, s: h.state || h.s });
         });
       });
@@ -306,6 +368,7 @@ class CompitNanoOneCard extends HTMLElement {
     }));
     this.shadowRoot.querySelectorAll('[data-e]').forEach((el) => el.addEventListener('click', (ev) => { ev.stopPropagation(); this._more(el.dataset.e); }));
     this.shadowRoot.querySelectorAll('[data-fr]').forEach((el) => el.addEventListener('click', () => { this._selFrame = Number(el.dataset.fr); this._render(); }));
+    this.shadowRoot.querySelectorAll('[data-fsrc]').forEach((el) => el.addEventListener('click', () => { this._fsrc = el.dataset.fsrc; this._selFrame = 0; this._render(); }));
     const cp = this.shadowRoot.querySelector('[data-copy]');
     if (cp) cp.addEventListener('click', () => this._copyFrames());
     this.shadowRoot.querySelectorAll('[data-rng]').forEach((b) => b.addEventListener('click', () => { this._logRange = Number(b.dataset.rng); this._fullText = ''; this._fullStat = ''; this._render(); }));
@@ -325,7 +388,7 @@ class CompitNanoOneCard extends HTMLElement {
     const tLbl = (key, x, y, anchor) => {
       const id = this._id(key);
       const v = num(this._st(key));
-      return `<g class="lnk" data-e="${esc(id)}"><text x="${x}" y="${y}" text-anchor="${anchor}" class="tl">${esc(DEFAULT_E[key][2])}</text>
+      return `<g class="lnk" data-e="${esc(id)}"><text x="${x}" y="${y}" text-anchor="${anchor}" class="tl">${esc(DEFAULT_E[key][2])}${this._unsure(id) ? ' (?)' : ''}</text>
         <text x="${x}" y="${y + 24}" text-anchor="${anchor}" class="tv">${v === null ? '—' : v.toFixed(1) + '°'}</text></g>`;
     };
     const fan = (cx, cy, v, key) => {
@@ -365,14 +428,14 @@ class CompitNanoOneCard extends HTMLElement {
     const tile = (key, digits, big) => {
       const id = this._id(key);
       return `<div class="tile ${big ? 'big' : ''} ${this._has(key) ? '' : 'dim'}" data-e="${esc(id)}">
-        <div class="tl2">${esc(DEFAULT_E[key][2])}</div><div class="tv2">${this._val(key, digits)}</div></div>`;
+        <div class="tl2">${esc(DEFAULT_E[key][2])}${this._q(id)}</div><div class="tv2">${this._val(key, digits)}</div></div>`;
     };
     const flag = (key) => {
       const s = this._st(key);
       const bin = s && /^(on|off)$/.test(s.state);
       const on = s && (s.state === 'on' || (!bin && !BAD.includes(s.state) && !/^(off|wył|wyl|nie|brak|0|nieaktywn)/i.test(s.state)));
       const txt = s && !BAD.includes(s.state) ? (bin ? (on ? ' ✓' : '') : ': ' + esc(s.state)) : '';
-      return `<span class="flag ${!s || BAD.includes(s.state) ? 'mute' : on ? 'on' : ''}" data-e="${esc(this._id(key))}">${esc(DEFAULT_E[key][2])}${txt}</span>`;
+      return `<span class="flag ${!s || BAD.includes(s.state) ? 'mute' : on ? 'on' : ''}" data-e="${esc(this._id(key))}">${esc(DEFAULT_E[key][2])}${this._q(this._id(key))}${txt}</span>`;
     };
     const filtr = this._st('filtr');
     const filtrWarn = filtr && !BAD.includes(filtr.state) && /(wymie|brud|zabr|alarm|on|1)/i.test(filtr.state);
@@ -382,25 +445,17 @@ class CompitNanoOneCard extends HTMLElement {
     const optFlag = (key) => this._st(key) ? flag(key) : '';
     // wszystko inne, co ESP wystawia z tym prefiksem, a karta nie zna z nazwy
     const known = new Set(Object.keys(DEFAULT_E).map((k) => this._id(k)));
-    const pre = this._prefix + '_';
-    const rest = Object.keys(this._hass.states).filter((id) => {
-      const o = id.split('.')[1];
-      return o && o.startsWith(pre) && !known.has(id) && !/^(button|update)\./.test(id);
-    }).sort();
-    const restTiles = rest.map((id) => {
-      const s = this._hass.states[id];
-      const name = (s.attributes.friendly_name || id).replace(new RegExp('^' + this._prefix.replace(/_/g, '[ _]') + '\\s*', 'i'), '');
-      const u = s.attributes.unit_of_measurement || '';
-      let v = BAD.includes(s.state) ? '<span class="mute">—</span>' : id.startsWith('binary_sensor.') ? (s.state === 'on' ? 'TAK' : 'NIE') : esc(String(s.state).slice(0, 60)) + (u ? '<small> ' + esc(u) + '</small>' : '');
-      return `<div class="tile" data-e="${esc(id)}"><div class="tl2">${esc(name)}</div><div class="tv2">${v}</div></div>`;
-    }).join('');
+    const rest = this._prefIds().filter((id) => !known.has(id) && !/^(button|update)\./.test(id) && !this._isDiag(id));
+    const restTiles = rest.map((id) => this._genTile(id)).join('');
+    const nast = ['n_komfort', 'n_eko', 'n_chlodzenie', 'n_reczna', 'n_poza'].map((k) => opt(k, 1)).join('')
+      + ['zad_nawiew', 'zad_wywiew', 'aero_moc'].map((k) => opt(k, 0)).join('');
     return `
       ${svg}
-      <div class="flags">${flag('bypass')}${optFlag('nagrzewnica')}${optFlag('rozmrazanie')}${optFlag('gwc')}${optFlag('kominek')}${optFlag('magistrala')}
+      <div class="flags">${optFlag('went_aktywna')}${flag('bypass')}${optFlag('bypass_tryb')}${optFlag('sezon')}${optFlag('chlodzenie')}${optFlag('wietrzenie')}${optFlag('urlop')}${optFlag('poza_domem')}${optFlag('nagrzewnica')}${optFlag('rozmrazanie')}${optFlag('gwc')}${optFlag('kominek')}${optFlag('magistrala')}
         ${filtr ? `<span class="flag ${filtrWarn ? 'err' : ''}" data-e="${esc(this._id('filtr'))}">Filtry: ${!BAD.includes(filtr.state) ? esc(filtr.state) : '—'}</span>` : ''}</div>
       <div class="grid">
         ${tile('bieg', undefined, true)}${tile('tryb', undefined, true)}
-        ${opt('bieg_zadany')}${opt('harmonogram')}
+        ${opt('bieg_zadany')}${opt('harmonogram')}${opt('tryb_term')}
         ${tile('t_pokoj', 1)}${tile('t_zadana', 1)}
         ${opt('wilgotnosc', 0)}${opt('co2', 0)}
         ${opt('przeplyw', 0)}${opt('obroty_nawiew', 0)}${opt('obroty_wywiew', 0)}
@@ -408,6 +463,7 @@ class CompitNanoOneCard extends HTMLElement {
         ${opt('filtr_dni', 0)}${opt('alarm')}${opt('ostrzezenie')}
         ${opt('godziny_pracy', 0)}${opt('wersja_nano')}
       </div>
+      ${nast ? `<h3 class="rest">Nastawy</h3><div class="grid">${nast}</div>` : ''}
       ${restTiles ? `<h3 class="rest">Pozostałe z ESP (${rest.length})</h3><div class="grid">${restTiles}</div>` : ''}
       <div class="effnote">Sprawność odzysku = (nawiew − czerpnia) / (wywiew − czerpnia)${eff === null ? ': za mała różnica temperatur albo brak danych' : ': <b>' + Math.round(eff) + '%</b>'}</div>
       ${missing === REKU_KEYS.length ? `<div class="warnbox">Nie widzę żadnej encji z prefiksem <code>${esc(this._prefix)}</code>. Sprawdź <code>prefix:</code> w karcie albo listę encji w zakładce Diagnostyka.</div>` : ''}`;
@@ -420,6 +476,7 @@ class CompitNanoOneCard extends HTMLElement {
       const s = this._st(key);
       return `<tr data-e="${esc(id)}" class="${s ? '' : 'dim'}"><td>${esc(DEFAULT_E[key][2])}</td><td>${extra !== undefined ? extra : this._val(key)}</td></tr>`;
     };
+    const opt = (key, extra) => this._st(key) ? row(key, extra) : '';
     // ESP
     const wifi = num(this._st('wifi'));
     const [wq, wc] = wifiQuality(wifi);
@@ -447,14 +504,23 @@ class CompitNanoOneCard extends HTMLElement {
         ${this._st('magistrala') ? row('magistrala') : ''}
         ${row('ramki_ok', ok === null ? undefined : String(ok))}
         ${row('ramki_bledne', bad === null ? undefined : `${bad}${errPct === null ? '' : ` <span class="${errPct < 1 ? 'ok' : errPct < 5 ? 'warn' : 'err'}">(${errPct.toFixed(1)}%)</span>`}`)}
+        ${opt('ramki_suma')}${opt('ramki_urwane')}
         ${row('ramki_min')}
+        ${opt('bajty')}${opt('bajty_b7')}${opt('nano_nadaje')}${opt('aero_odp')}
+        ${opt('typy')}${opt('zegar')}
         ${lastFrameT ? `<tr><td>Ostatnia ramka</td><td>${hhmmss(lastFrameT)}</td></tr>` : ''}
         ${row('adresy', this._fmtAddrs())}
       </table>`;
 
     // ramki
-    const frames = this._frames.slice().reverse();
-    if (!frames.length && rs && !BAD.includes(rs.state)) frames.push({ t: rs.last_changed ? new Date(rs.last_changed) : new Date(), s: rs.state });
+    const srcs = FRAME_KEYS.filter((k) => this._st(k) || this._frames.some((f) => f.k === k));
+    const fsrc = this._fsrc && (this._fsrc === 'all' || srcs.includes(this._fsrc)) ? this._fsrc : 'all';
+    const frames = this._frames.filter((f) => fsrc === 'all' || f.k === fsrc).reverse();
+    // brak historii: pokaz chociaz biezace wartosci
+    if (!frames.length) {
+      (fsrc === 'all' ? srcs : [fsrc]).forEach((k) => { const s = this._st(k); if (s && !BAD.includes(s.state)) frames.push({ t: s.last_changed ? new Date(s.last_changed) : new Date(), s: s.state, k }); });
+    }
+    const srcTabs = srcs.length > 1 ? `<div class="row">${['all'].concat(srcs).map((k) => `<button class="mini ${k === fsrc ? 'on' : ''}" data-fsrc="${k}">${k === 'all' ? 'wszystkie' : k === 'ramka' ? 'ostatnia' : esc(DEFAULT_E[k][2])}</button>`).join('')}</div>` : '';
     if (this._selFrame >= frames.length) this._selFrame = 0;
     const list = frames.slice(0, 40).map((f, i) => {
       const fr = parseFrames(f.s)[0] || [];
@@ -462,6 +528,7 @@ class CompitNanoOneCard extends HTMLElement {
       return `<div class="fr ${i === this._selFrame ? 'sel' : ''}" data-fr="${i}">
         <span class="ft">${hhmmss(f.t)}</span>
         <span class="${d.ok ? 'ok' : 'err'}">${d.ok ? '✓' : '✗'}</span>
+        <span class="fk">${esc(f.k && f.k !== 'ramka' ? DEFAULT_E[f.k][2] : '')}</span>
         <span class="fa">${d.src !== undefined ? d.src + '→' + (d.dst === null ? '?' : d.dst) : ''}</span>
         <code>${esc(String(f.s).slice(0, 60))}${String(f.s).length > 60 ? '…' : ''}</code></div>`;
     }).join('');
@@ -483,6 +550,22 @@ class CompitNanoOneCard extends HTMLElement {
     }).join('');
     const missing = Object.keys(DEFAULT_E).filter((k) => !this._st(k)).map((k) => `<code>${esc(this._id(k))}</code>`);
 
+    const known2 = new Set(Object.keys(DEFAULT_E).map((k) => this._id(k)));
+    const diagIds = this._prefIds().filter((id) => !known2.has(id) && this._isDiag(id) && !/^(button|update)\./.test(id));
+    const cfgIds = diagIds.filter((id) => /^(select|switch|number|text)\./.test(id));
+    const rawIds = diagIds.filter((id) => /_c14_|_aero_t\d/.test(id) && !cfgIds.includes(id));
+    const srvIds = diagIds.filter((id) => !rawIds.includes(id) && !cfgIds.includes(id));
+    const kvRows = (ids) => ids.map((id) => {
+      const s = this._hass.states[id];
+      const u = s.attributes.unit_of_measurement || '';
+      return `<tr data-e="${esc(id)}"><td>${esc(this._shortName(id))}${this._q(id)}</td><td>${BAD.includes(s.state) ? '<span class="mute">—</span>' : esc(String(s.state).slice(0, 80)) + (u ? ' ' + esc(u) : '')}</td></tr>`;
+    }).join('');
+    const reg = this._st('rejestry');
+    const extraSecs = `
+      ${rawIds.length ? `<div class="sec"><h3>Surowe pola C14 (${rawIds.length})</h3><table class="kv">${kvRows(rawIds)}</table></div>` : ''}
+      ${reg && !BAD.includes(reg.state) ? `<div class="sec"><h3>Rejestry Nano</h3><pre class="pre" data-e="${esc(reg.entity_id)}">${esc(reg.state)}</pre></div>` : ''}
+      ${srvIds.length ? `<div class="sec"><h3>Parametry serwisowe (${srvIds.length})</h3><table class="kv">${kvRows(srvIds)}</table></div>` : ''}
+      ${cfgIds.length ? `<div class="sec"><h3>Ustawienia ESP (${cfgIds.length})</h3><table class="kv">${kvRows(cfgIds)}</table></div>` : ''}`;
     const rng = this._logRange || 24;
     return `
       <div class="sec fullog">
@@ -503,8 +586,10 @@ class CompitNanoOneCard extends HTMLElement {
       <div class="sec"><h3>Magistrala RS485 / C14</h3>${busTbl}</div>
       <div class="sec">
         <h3>Ostatnie ramki C14 <button class="mini" data-copy>kopiuj</button></h3>
-        ${frames.length ? `<div class="frames">${list}</div>${detail}` : `<div class="mute">Brak ramek. Karta czyta je z <code>${esc(this._id('ramka'))}</code> (historia ${esc(this._config.history_hours)} h + na żywo).</div>`}
+        ${srcTabs}
+        ${frames.length ? `<div class="frames">${list}</div>${detail}` : `<div class="mute">Brak ramek. Karta czyta je z <code>${esc(this._id('ramka'))}</code> i encji <code>${esc(this._prefix)}_c14_ramka_*</code> (historia ${esc(this._config.history_hours)} h + na żywo).</div>`}
       </div>
+      ${extraSecs}
       <div class="sec"><h3>Log zdarzeń ESP</h3>
         ${log ? `<div class="log">${log}</div>` : `<div class="mute">Brak zdarzeń w ostatnich ${esc(this._config.history_hours)} h. Źródło: <code>${esc(this._id('diag'))}</code> + zmiany alarmu, trybu, biegu, bypassu, filtrów i statusu.</div>`}
       </div>
@@ -512,6 +597,13 @@ class CompitNanoOneCard extends HTMLElement {
         ${all.length ? `<table class="kv all">${allTbl}</table>` : '<div class="mute">Brak encji z tym prefiksem.</div>'}
         ${missing.length ? `<details><summary>Karta szuka, a nie ma (${missing.length})</summary><div class="miss">${missing.join(' ')}</div><div class="mute">Możesz je podpiąć w <code>entities:</code> w konfiguracji karty.</div></details>` : ''}
       </div>`;
+  }
+
+  _genTile(id) {
+    const s = this._hass.states[id];
+    const u = s.attributes.unit_of_measurement || '';
+    const v = BAD.includes(s.state) ? '<span class="mute">—</span>' : id.startsWith('binary_sensor.') ? (s.state === 'on' ? 'TAK' : 'NIE') : esc(String(s.state).slice(0, 60)) + (u ? '<small> ' + esc(u) + '</small>' : '');
+    return `<div class="tile" data-e="${esc(id)}"><div class="tl2">${esc(this._shortName(id))}</div><div class="tv2">${v}</div></div>`;
   }
 
   _fmtAddrs() {
@@ -569,7 +661,7 @@ class CompitNanoOneCard extends HTMLElement {
   }
 
   async _copyFrames() {
-    const txt = this._frames.map((f) => f.t.toISOString() + ' ' + f.s).join('\n');
+    const txt = this._frames.map((f) => f.t.toISOString() + ' ' + (f.k ? '[' + (f.k === 'ramka' ? 'ostatnia' : DEFAULT_E[f.k][2]) + '] ' : '') + f.s).join('\n');
     const ok = await this._copyText(txt);
     const b = this.shadowRoot.querySelector('[data-copy]');
     if (b) b.textContent = ok ? 'skopiowane (' + this._frames.length + ')' : 'nie da się skopiować';
@@ -718,6 +810,9 @@ const CSS = `
   .lg-row .le { color:var(--secondary-text-color); min-width:90px; }
   details { margin-top:8px; font-size:.85em; }
   .rest { margin-top:14px; }
+  .q { color:var(--warning-color,#ffa600); font-weight:700; margin-left:2px; }
+  .fk { color:var(--secondary-text-color); min-width:70px; }
+  .pre { white-space:pre-wrap; word-break:break-all; font-family:var(--code-font-family,monospace); font-size:.78em; background:var(--secondary-background-color); border-radius:8px; padding:8px; margin:0; max-height:200px; overflow:auto; }
   .fullog { background:var(--secondary-background-color); border-radius:10px; padding:10px 12px; }
   .row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:6px; }
   .mini.on { border-color:var(--primary-color); color:var(--primary-color); }
