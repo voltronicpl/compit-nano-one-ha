@@ -180,6 +180,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v1.6** – encje szukane też po urządzeniu (gdy HA nadał im inne ID niż `<prefix>_…`), w Diagnostyce i w kopiowanym logu lista brakujących encji sterujących oraz encji wyłączonych w rejestrze HA.
 - **v1.5** – karta sama włącza „Sterowanie z HA” przed zapisem (bez pytania i szukania przełącznika), komunikaty ✓/✗ po każdej zmianie, czerwony pasek „Wgraj na ESP YAML v1.6” z listą brakujących encji, pasek „ESP offline”, sekcja Sterowanie widoczna zawsze.
 - **v1.4** – każda wartość klikalna i edytowalna w karcie (wpisywanie liczb, kafle Bieg/Tryb/Temp. zadana i plakietki Bypass/Sezon otwierają wybór), karta przerysowuje się tylko przy zmianie encji `nano_one_*` i nigdy w trakcie kliknięcia (koniec skakania i gubienia klików), łapanie zdublowanych encji `_2`/`_3` z ostrzeżeniem w Diagnostyce.
 - **v1.3** – sterowanie z karty pod YAML v1.6: jeden wybór trybu (`ustaw_tryb`: ręczny stop/bieg 1–3, wg zegara, świąteczny, poza domem) z wskaźnika biegu i z PROGRAM, blokada „Sterowanie z HA (iNext)”, warianty nazw encji (karta działa ze starym i nowym YAML-em).

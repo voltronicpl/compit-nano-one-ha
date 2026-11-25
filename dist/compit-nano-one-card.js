@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v1.5
+ * compit-nano-one-card  v1.6
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -17,7 +17,7 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v1.5';
+const VERSION = 'v1.6';
 
 // klucz: [domena, koncowka, opis, jednostka zapasowa]
 const DEFAULT_E = {
@@ -174,6 +174,8 @@ const C14_ADDR = (a) => {
 };
 
 const BAD = ['unavailable', 'unknown', '', undefined, null];
+// slug jak w HA: bez polskich znakow, male litery, _ zamiast reszty
+const slugPl = (t) => String(t).replace(/[łŁ]/g, 'l').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const num = (s) => { const v = parseFloat(s && s.state !== undefined ? s.state : s); return isNaN(v) ? null : v; };
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -277,7 +279,21 @@ class CompitNanoOneCard extends HTMLElement {
     if (this._idxSrc !== st) {
       this._idxSrc = st;
       const pre = this._prefix + '_';
-      this._idxList = Object.keys(st).filter((id) => { const o = id.split('.')[1]; return o && o.startsWith(pre); });
+      const byPre = Object.keys(st).filter((id) => { const o = id.split('.')[1]; return o && o.startsWith(pre); });
+      // v1.6: dobierz tez encje TEGO SAMEGO URZADZENIA (rejestr HA), nawet gdy maja inne entity_id
+      const ents = this._hass.entities || {};
+      const devs = new Set(byPre.map((id) => ents[id] && ents[id].device_id).filter(Boolean));
+      if (this._config.device_id) devs.add(this._config.device_id);
+      const byDev = devs.size ? Object.keys(ents).filter((id) => devs.has(ents[id].device_id) && st[id] && !byPre.includes(id)) : [];
+      this._idxList = byPre.concat(byDev);
+      // wirtualne object_id: <prefix>_<slug(nazwy bez nazwy urzadzenia)> - do dopasowania koncowek
+      this._vobj = {};
+      const devName = (this._config.device_name || this._prefix.replace(/_/g, ' ')).toLowerCase();
+      byDev.forEach((id) => {
+        let n = String(st[id].attributes.friendly_name || '').trim();
+        if (n.toLowerCase().startsWith(devName)) n = n.slice(devName.length);
+        this._vobj[id] = id.split('.')[0] + '.' + pre + slugPl(n);
+      });
       this._resolved = {};
     }
     return this._idxList;
@@ -296,7 +312,7 @@ class CompitNanoOneCard extends HTMLElement {
     alts.forEach((suf, ai) => {
       const re = new RegExp('^([a-z_]+)\\.' + this._prefix + '_' + suf + '(_(\\d+))?$');
       list.forEach((id) => {
-        const m = id.match(re);
+        const m = id.match(re) || (this._vobj[id] && this._vobj[id].match(re));
         if (!m) return;
         const s = this._hass.states[id];
         const score = (s && !BAD.includes(s.state) ? 1000 : 0) + (m[1] === dom ? 100 : 0) + (10 - Math.min(ai, 9)) + (m[2] ? 0 : 1);
@@ -331,9 +347,14 @@ class CompitNanoOneCard extends HTMLElement {
     if (reg) return false;
     return /_(c14_|aero_t\d|bieg_\d_|nawiew_bieg|wywiew_bieg|nawiew_wietrzenie|wywiew_wietrzenie|prog_|histereza|blokada|min_temp|metoda_)/.test(id) || /\(serwis\)/.test((this._hass.states[id].attributes.friendly_name || ''));
   }
+  // encje urzadzenia, ktore sa w rejestrze HA, ale nie maja stanu (np. wylaczone)
+  _regNoState() {
+    const ents = this._hass.entities || {}, st = this._hass.states;
+    const devs = new Set(this._idx().map((id) => ents[id] && ents[id].device_id).filter(Boolean));
+    return Object.keys(ents).filter((id) => devs.has(ents[id].device_id) && !st[id]).sort();
+  }
   _prefIds() {
-    const pre = this._prefix + '_';
-    return Object.keys(this._hass.states).filter((id) => { const o = id.split('.')[1]; return o && o.startsWith(pre); }).sort();
+    return this._idx().slice().sort();
   }
   _shortName(id) {
     const s = this._hass.states[id];
@@ -586,7 +607,8 @@ class CompitNanoOneCard extends HTMLElement {
     const all = miss.length >= 10;
     return `<div class="errbox"><b>${all ? 'Brak encji sterujących w HA – wgraj na ESP YAML v1.6.' : 'Brakuje części encji sterujących (YAML v1.6).'}</b>
       <div class="small">Jak v1.6 już jest wgrany: Ustawienia → Urządzenia i usługi → ESPHome → Nano One → ⋮ → Przeładuj. Sprawdź też, czy encje nie są wyłączone (Ustawienia → Encje → filtr „wyłączone”).</div>
-      <details><summary>Czego brakuje (${miss.length})</summary><div class="miss">${miss.map((x) => `<code>${esc(x)}</code>`).join(' ')}</div></details></div>`;
+      <details><summary>Czego brakuje (${miss.length})</summary><div class="miss">${miss.map((x) => `<code>${esc(x)}</code>`).join(' ')}</div></details>
+      ${(() => { const d = this._regNoState(); return d.length ? `<div class="small"><b>W rejestrze HA, ale wyłączone / bez stanu (${d.length}):</b> ${d.map((x) => `<code>${esc(x)}</code>`).join(' ')} – włącz je w Ustawienia → Encje.</div>` : ''; })()}</div>`;
   }
 
   _selectOpt(key, opt) {
@@ -935,7 +957,7 @@ class CompitNanoOneCard extends HTMLElement {
 
     // wszystkie encje z prefiksem
     const pre = this._prefix + '_';
-    const all = Object.keys(this._hass.states).filter((id) => id.split('.')[1] && id.split('.')[1].startsWith(pre)).sort();
+    const all = this._prefIds();
     const known = new Set(Object.keys(DEFAULT_E).map((k) => this._id(k)));
     const allTbl = all.map((id) => {
       const s = this._hass.states[id];
@@ -976,6 +998,7 @@ class CompitNanoOneCard extends HTMLElement {
         <div class="mute small">Wszystkie zmiany wszystkich encji <code>${esc(pre)}*</code> z historii HA (diagnostyka ESP, surowe ramki C14, temperatury, alarmy…) + stan bieżący, posortowane po czasie.</div>
         ${this._fullText ? `<textarea readonly class="fulltxt">${esc(this._fullText)}</textarea>` : ''}
       </div>
+      ${this._missingBox()}
       ${(() => { const d = this._dupes(); return d.length ? `<div class="warnbox">W HA są zdublowane encje z końcówką _2/_3 (stare zostały w rejestrze po zmianie nazw w YAML): ${d.map((x) => `<code>${esc(x)}</code>`).join(' ')}. Karta bierze tę, która ma dane. Stare, nieaktywne usuniesz w HA: Ustawienia → Urządzenia → Encje.</div>` : ''; })()}
       <div class="sec"><h3>ESP</h3>${espTbl}</div>
       <div class="sec"><h3>Magistrala RS485 / C14</h3>${busTbl}</div>
@@ -1068,13 +1091,15 @@ class CompitNanoOneCard extends HTMLElement {
     this._fullStat = 'pobieram ' + hours + ' h historii…';
     this._render();
     const pre = this._prefix + '_';
-    const ids = Object.keys(this._hass.states).filter((id) => id.split('.')[1] && id.split('.')[1].startsWith(pre)).sort();
+    const ids = this._prefIds();
     const name = (id) => { const k = Object.keys(DEFAULT_E).find((x) => this._id(x) === id); return k ? DEFAULT_E[k][2] : (this._hass.states[id].attributes.friendly_name || id); };
     const now = new Date();
     const head = [
       '# compit-nano-one-card ' + VERSION + ' — pełny log',
       '# wygenerowano: ' + now.toISOString() + ' (' + now.toLocaleString() + ')',
       '# prefiks: ' + this._prefix + ', zakres: ' + hours + ' h, encji: ' + ids.length,
+      '# brakujace encje sterujace: ' + (this._missingCtl().join(', ') || 'brak'),
+      '# encje urzadzenia w rejestrze HA bez stanu: ' + (this._regNoState().join(', ') || 'brak'),
       '',
       '## Stan bieżący',
     ];
