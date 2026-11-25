@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v1.2
+ * compit-nano-one-card  v1.3
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -17,7 +17,7 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v1.2';
+const VERSION = 'v1.3';
 
 // klucz: [domena, koncowka, opis, jednostka zapasowa]
 const DEFAULT_E = {
@@ -110,12 +110,13 @@ const DEFAULT_E = {
   status_went:  ['sensor', 'status_wentylatorow',        'Status wentylatorów', ''],
   bieg_centr:   ['sensor', 'bieg_centrali',              'Bieg centrali',    ''],
   harm_akt:     ['binary_sensor', 'harmonogram_aktywny', 'Harmonogram',      ''],
+  set_tryb:     ['select', 'ustaw_tryb',                 'Tryb pracy',       ''],
   set_bieg:     ['select', 'ustaw_bieg',                 'Bieg',             ''],
   set_program:  ['select', 'ustaw_program',              'Program',          ''],
   set_sezon:    ['select', 'ustaw_sezon',                'Sezon',            ''],
   set_bypass:   ['select', 'ustaw_bypass',               'Bypass',           ''],
   sw_wietrz:    ['switch', 'wietrzenie',                 'Wietrzenie',       ''],
-  nadawanie:    ['switch', 'nadawanie_inext',            'Nadawanie iNext',  ''],
+  nadawanie:    ['switch', 'sterowanie_z_ha_inext|sterowanie_z_ha|nadawanie_inext', 'Sterowanie z HA (iNext)', ''],
   t_reczna:     ['number', 'temperatura_reczna',         'Ręczna',           '°C'],
   t_dzien:      ['number', 'temperatura_dzien',          'Dzień',            '°C'],
   t_noc:        ['number', 'temperatura_noc',            'Noc',              '°C'],
@@ -262,12 +263,16 @@ class CompitNanoOneCard extends HTMLElement {
     const ov = this._config.entities && this._config.entities[key];
     if (ov) return ov;
     if (this._resolved[key] && this._hass && this._hass.states[this._resolved[key]]) return this._resolved[key];
-    const [dom, suf] = DEFAULT_E[key];
-    const obj = this._prefix + '_' + suf;
-    let id = dom + '.' + obj;
+    const [dom, sufs] = DEFAULT_E[key];
+    // v1.3: koncowka moze miec warianty "a|b" (nazwy z roznych wersji YAML), pierwszy znaleziony wygrywa
+    const alts = String(sufs).split('|');
+    let id = dom + '.' + this._prefix + '_' + alts[0];
     if (this._hass && !this._hass.states[id]) {
-      for (const d of ['sensor', 'binary_sensor', 'text_sensor', 'select', 'number', 'switch', 'fan', 'climate']) {
-        if (this._hass.states[d + '.' + obj]) { id = d + '.' + obj; break; }
+      search: for (const suf of alts) {
+        const obj = this._prefix + '_' + suf;
+        for (const d of [dom, 'sensor', 'binary_sensor', 'text_sensor', 'select', 'number', 'switch', 'fan', 'climate']) {
+          if (this._hass.states[d + '.' + obj]) { id = d + '.' + obj; break search; }
+        }
       }
     }
     this._resolved[key] = id;
@@ -439,7 +444,7 @@ class CompitNanoOneCard extends HTMLElement {
       else if (a === 'no') this._confirmTx = false;
       else if (a === 'yes' && n) {
         this._confirmTx = false;
-        this._call('switch', n.state === 'on' ? 'turn_off' : 'turn_on', { entity_id: n.entity_id }, 'Nadawanie iNext → ' + (n.state === 'on' ? 'WYŁ.' : 'WŁ.'));
+        this._call('switch', n.state === 'on' ? 'turn_off' : 'turn_on', { entity_id: n.entity_id }, 'Sterowanie z HA → ' + (n.state === 'on' ? 'WYŁ.' : 'WŁ.'));
       }
       this._render();
     }));
@@ -560,8 +565,9 @@ class CompitNanoOneCard extends HTMLElement {
     if (/^\d+$/.test(bl)) bl = 'BIEG ' + bl; else bl = bl.toUpperCase();
     const C = 2 * Math.PI * 38, p = pct === null ? 0 : Math.max(0, Math.min(100, pct));
     const run = this._running();
-    const can = !!this._st('set_bieg');
-    return `<div class="gauge ${can ? 'click' : ''}" ${can ? 'data-pop="bieg"' : `data-e="${esc(this._id('bieg'))}"`}>
+    const gp = this._st('set_tryb') ? 'tryb' : 'bieg';
+    const can = !!this._st('set_' + gp);
+    return `<div class="gauge ${can ? 'click' : ''}" ${can ? `data-pop="${gp}"` : `data-e="${esc(this._id('bieg'))}"`}>
       <svg viewBox="0 0 100 100" class="ring"><circle cx="50" cy="50" r="38" class="rbg"/>
         <circle cx="50" cy="50" r="38" class="rfg" stroke-dasharray="${(C * p / 100).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 50 50)"/>
         <g transform="translate(50 50)"><g class="${run ? 'spin' : ''}" style="animation-duration:2s"><path d="M0 -16 C7 -14 6 -4 0 0 C-6 -4 -7 -14 0 -16Z M13.9 8 C10 14.5 1 10.5 0 0 C9.5 -1 16 3 13.9 8Z M-13.9 8 C-16 3 -9.5 -1 0 0 C-1 10.5 -10 14.5 -13.9 8Z" class="rblade"/></g></g></svg>
@@ -584,7 +590,7 @@ class CompitNanoOneCard extends HTMLElement {
     };
     const filtrOk = filtr === null ? null : !/(wymie|brud|zabr|alarm|on|1)/i.test(filtr);
     return `<div class="bar">
-      ${cell('program', 'tryb', 'sync', 'PROGRAM', prog ? prog.toUpperCase() : null, '', true)}
+      ${cell(this._st('set_tryb') ? 'tryb' : 'program', 'tryb', 'sync', 'PROGRAM', prog ? prog.toUpperCase() : null, '', true)}
       ${cell('bypass', 'bypass_tryb', 'shuf', 'BYPASS', (byp ? byp.toUpperCase() : (this._st('bypass') ? (bypOpen ? 'OTWARTY' : 'ZAMKNIĘTY') : null)) + (byp && bypOpen ? ' ·  OTW.' : ''), 'acc')}
       ${cell('sezon', 'sezon', 'sun', 'SEZON', sez ? sez.toUpperCase() : null, 'acc')}
       <div class="bcell" data-e="${esc(this._id('filtr'))}">${ico('filt', filtrOk === false ? 'bad' : 'good')}<span class="bl">FILTR</span> <b class="${filtrOk === null ? 'mute' : filtrOk ? 'good' : 'bad'}">${filtr === null ? '—' : filtrOk ? 'OK' : esc(filtr.toUpperCase())}</b></div>
@@ -599,7 +605,7 @@ class CompitNanoOneCard extends HTMLElement {
     const opts = s.attributes.options || [];
     const can = this._canWrite();
     return `<div class="pop">
-      <div class="poph">${esc(DEFAULT_E[key][2])}: wybierz${can ? '' : ' <span class="warn">(zapis wyłączony, włącz „Nadawanie iNext”)</span>'}<button class="mini x" data-popclose>✕</button></div>
+      <div class="poph">${esc(DEFAULT_E[key][2])}: wybierz${can ? '' : ' <span class="warn">(zapis wyłączony, włącz „Sterowanie z HA”)</span>'}<button class="mini x" data-popclose>✕</button></div>
       <div class="row">${opts.map((o) => `<button class="opt ${o === s.state ? 'on' : ''}" data-opt="${esc(o)}" data-optkey="${key}" ${can ? '' : 'disabled'}>${esc(o)}</button>`).join('')}</div>
     </div>`;
   }
@@ -625,7 +631,7 @@ class CompitNanoOneCard extends HTMLElement {
     let lock = '';
     if (nadaw) {
       const on = nadaw.state === 'on';
-      lock = `<div class="lock ${on ? 'on' : ''}">${ico('lock')}<span>Nadawanie iNext: <b>${on ? 'WŁ. – zapis do Nano aktywny' : 'WYŁ. – zapis wyłączony'}</b></span>
+      lock = `<div class="lock ${on ? 'on' : ''}">${ico('lock')}<span>Sterowanie z HA (iNext): <b>${on ? 'WŁ. – zapis do Nano aktywny' : 'WYŁ. – zapis wyłączony'}</b></span>
         ${this._confirmTx ? `<span class="warn">Na pewno ${on ? 'wyłączyć' : 'włączyć'}?</span><button class="mini" data-tx="yes">Tak</button><button class="mini" data-tx="no">Nie</button>`
           : `<button class="mini" data-tx="ask">${on ? 'Wyłącz' : 'Włącz'}</button>`}</div>`;
     }

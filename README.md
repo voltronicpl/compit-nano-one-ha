@@ -31,16 +31,18 @@ Podgląd jest zrobiony na przykładowych wartościach.
 
 Kliknięcie w wartość otwiera standardowe okno encji HA. Karta tylko czyta, niczego nie zmienia w centrali.
 
-## Sterowanie (YAML v1.4, zapis do Nano jako iNext)
+## Sterowanie z karty (YAML v1.6, zapis do Nano jako iNext)
 
-Przyciski pojawiają się tylko, gdy w HA są encje sterujące z ESPHome:
-- klik w wskaźnik biegu: Stop / Bieg 1 / 2 / 3 (`select.<prefix>_ustaw_bieg`)
-- klik w PROGRAM / BYPASS / SEZON: lista opcji (`select.<prefix>_ustaw_program`, `_ustaw_bypass`, `_ustaw_sezon`)
-- Wietrzenie wł./wył. (`switch.<prefix>_wietrzenie`)
-- Temperatury zadane z +/−: ręczna, dzień, noc, poza domem (`number.*`)
-- Biegi % z +/−: nawiew i wywiew dla biegów 1–3 i wietrzenia (`number.*`)
+Wszystko zmieniasz w karcie, nie w encjach ESP. Przyciski pojawiają się, gdy w HA są encje sterujące z ESPHome:
+- klik we wskaźnik biegu albo w PROGRAM: Ręczny Stop / Ręczny bieg 1–3 / Wg zegara / Świąteczny / Poza domem (`select.<prefix>_ustaw_tryb`)
+- klik w BYPASS: Zamknięty / Auto / Otwarty (`select.<prefix>_ustaw_bypass`)
+- klik w SEZON: Zima / Lato (`select.<prefix>_ustaw_sezon`)
+- Temperatury zadane z +/−: ręczna, dzień, noc, poza domem, 5–40 °C co 0,1 (`number.*`)
+- Biegi % z +/−: nawiew i wywiew dla biegów 1–3 i wietrzenia, 10–100 % (`number.*`)
 
-**Blokada:** gdy jest przełącznik `switch.<prefix>_nadawanie_inext` i jest WYŁ., wszystkie przyciski są nieaktywne. Włącza się go w karcie z potwierdzeniem „Na pewno?”. Każdy zapis i każdy błąd zapisu trafia do logu zdarzeń w Diagnostyce.
+Ze starszym YAML-em (v1.4) karta dalej działa na `ustaw_bieg`, `ustaw_program`, przełączniku `wietrzenie` i `nadawanie_inext`.
+
+**Blokada:** przełącznik `switch.<prefix>_sterowanie_z_ha_inext` („Sterowanie z HA (iNext)”). Gdy jest WYŁ., wszystkie przyciski są nieaktywne. Włączasz go w karcie z potwierdzeniem „Na pewno?”. Każdy zapis i każdy błąd zapisu trafia do logu zdarzeń w Diagnostyce.
 
 ## Instalacja przez HACS
 
@@ -148,12 +150,13 @@ Surowa ramka (`ostatnia_ramka`) to tekst HEX, np. `A9 10 35 63 … 23`. Może by
 | `status_went` | `sensor.<prefix>_status_wentylatorow` | Status wentylatorów |
 | `bieg_centr` | `sensor.<prefix>_bieg_centrali` | Bieg centrali |
 | `harm_akt` | `binary_sensor.<prefix>_harmonogram_aktywny` | Harmonogram |
+| `set_tryb` | `select.<prefix>_ustaw_tryb` | Tryb pracy |
 | `set_bieg` | `select.<prefix>_ustaw_bieg` | Bieg |
 | `set_program` | `select.<prefix>_ustaw_program` | Program |
 | `set_sezon` | `select.<prefix>_ustaw_sezon` | Sezon |
 | `set_bypass` | `select.<prefix>_ustaw_bypass` | Bypass |
 | `sw_wietrz` | `switch.<prefix>_wietrzenie` | Wietrzenie |
-| `nadawanie` | `switch.<prefix>_nadawanie_inext` | Nadawanie iNext |
+| `nadawanie` | `switch.<prefix>_sterowanie_z_ha_inext` lub `_sterowanie_z_ha` lub `_nadawanie_inext` | Sterowanie z HA (iNext) |
 | `t_reczna` | `number.<prefix>_temperatura_reczna` | Ręczna |
 | `t_dzien` | `number.<prefix>_temperatura_dzien` | Dzień |
 | `t_noc` | `number.<prefix>_temperatura_noc` | Noc |
@@ -175,6 +178,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v1.3** – sterowanie z karty pod YAML v1.6: jeden wybór trybu (`ustaw_tryb`: ręczny stop/bieg 1–3, wg zegara, świąteczny, poza domem) z wskaźnika biegu i z PROGRAM, blokada „Sterowanie z HA (iNext)”, warianty nazw encji (karta działa ze starym i nowym YAML-em).
 - **v1.2** – wygląd wg wzoru (ciemny panel, schemat wymiennika z kaflami, wskaźnik biegu, pasek PROGRAM/BYPASS/SEZON/FILTR, plakietka PRACA), sterowanie pod YAML v1.4 (bieg, program, bypass, sezon, wietrzenie, temperatury zadane, % biegów) z blokadą „Nadawanie iNext”, w Diagnostyce ramki wysłane iNext i ostatnia wymiana iNext, opcje `theme` i `niepewne`.
 - **v1.1** – pod YAML v1.3: plakietki (wentylacja, bypass tryb, sezon, chłodzenie, wietrzenie, urlop, poza domem), sekcja Nastawy, znacznik „?” dla niepewnych encji, encje diagnostyczne przeniesione do Diagnostyki (surowe pola C14, rejestry, serwis, ustawienia ESP), wszystkie ramki C14 (Nano status/nastawy, E3 3A/3B, AERO, surowe bajty) z przełącznikiem źródła, więcej liczników magistrali.
 - **v1.0** – pierwsza wersja: zakładki Rekuperator i Diagnostyka, kopiowanie i pobieranie całego logu, dekoder ramek C14, automatyczne kafle dla nieznanych encji.
