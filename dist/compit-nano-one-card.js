@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v1.6
+ * compit-nano-one-card  v1.7
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -8,7 +8,7 @@
  *   title: Rekuperacja        # opcjonalnie
  *   tab: rekuperator          # opcjonalnie, zakladka startowa: rekuperator | diagnostyka
  *   theme: dark               # opcjonalnie: dark (domyslnie, wg wzoru) | light (kolory motywu HA)
- *   niepewne: [t_czerpnia, t_wywiew]  # opcjonalnie, klucze oznaczane "?" (niepewne mapowanie); [] = zadne
+ *   niepewne: [t_czerpnia]    # opcjonalnie, klucze oznaczane "?" (niepewne mapowanie); domyslnie zadne
  *   history_hours: 6          # opcjonalnie, ile godzin wstecz czytac log i ramki w Diagnostyce
  *   entities:                 # opcjonalnie, nadpisanie pojedynczych encji
  *     t_nawiew: sensor.moja_temperatura_nawiewu
@@ -17,7 +17,7 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v1.6';
+const VERSION = 'v1.7';
 
 // klucz: [domena, koncowka, opis, jednostka zapasowa]
 const DEFAULT_E = {
@@ -335,7 +335,7 @@ class CompitNanoOneCard extends HTMLElement {
     if (!s) return false;
     if (/\?/.test(s.attributes.friendly_name || '')) return true;
     // v1.2: czerpnia i wywiew z rejestrow Nano - do potwierdzenia (wylacz: niepewne: [])
-    const list = Array.isArray(this._config.niepewne) ? this._config.niepewne : ['t_czerpnia', 't_wywiew'];
+    const list = Array.isArray(this._config.niepewne) ? this._config.niepewne : [];
     return list.some((k) => DEFAULT_E[k] && this._id(k) === id);
   }
   _q(id) { return this._unsure(id) ? '<sup class="q" title="mapowanie niepewne (? w YAML)">?</sup>' : ''; }
@@ -641,7 +641,7 @@ class CompitNanoOneCard extends HTMLElement {
         <g transform="translate(${x + 14} ${y + 23}) scale(1.35)" class="${cls}"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICO[icon]}</g></g>
         <line x1="${x + 58}" y1="${y + 18}" x2="${x + 58}" y2="${y + 60}" class="hsep"/>
         <text x="${x + 70}" y="${y + 31}" class="hlbl">${label}${q}</text>
-        <text x="${x + 70}" y="${y + 61}" class="hval">${s && !BAD.includes(s.state) ? fmtT(v) : '—'}</text></g>`;
+        <text x="${x + 70}" y="${y + 61}" class="hval ${s && BAD.includes(s.state) ? 'nos' : ''}">${s && !BAD.includes(s.state) ? fmtT(v) : s ? 'brak czujnika' : '—'}</text></g>`;
     };
     // osmiokat wymiennika
     const cx = 320, cy = 150, R = 74;
@@ -881,7 +881,7 @@ class CompitNanoOneCard extends HTMLElement {
       </div>
       ${nast ? `<h3 class="rest">Nastawy</h3><div class="grid">${nast}</div>` : ''}
       ${restTiles ? `<h3 class="rest">Pozostałe z ESP (${rest.length})</h3><div class="grid">${restTiles}</div>` : ''}
-      <div class="effnote">Sprawność odzysku = (nawiew − czerpnia) / (wywiew − czerpnia)${eff === null ? ': za mała różnica temperatur albo brak danych' : ': <b>' + Math.round(eff) + '%</b>'}</div>
+      <div class="effnote">Sprawność odzysku = (nawiew − czerpnia) / (wywiew − czerpnia)${eff === null ? ': ' + (() => { const miss = [['t_czerpnia', 'czerpni'], ['t_nawiew', 'nawiewu'], ['t_wywiew', 'wywiewu']].filter(([k]) => num(this._st(k)) === null).map(([, n]) => n); return miss.length ? 'brak czujnika ' + miss.join(', ') : 'za mała różnica temperatur'; })() : ': <b>' + Math.round(eff) + '%</b>'}</div>
       ${missing === REKU_KEYS.length ? `<div class="warnbox">Nie widzę żadnej encji z prefiksem <code>${esc(this._prefix)}</code>. Sprawdź <code>prefix:</code> w karcie albo listę encji w zakładce Diagnostyka.</div>` : ''}`;
   }
 
@@ -1170,6 +1170,7 @@ const CSS = `
   .hlbl { font-size:13px; font-weight:700; letter-spacing:1px; fill:var(--primary-text-color); }
   .hval { font-size:25px; font-weight:800; fill:var(--primary-text-color); }
   .hq { fill:var(--warning-color); }
+  .hval.nos { font-size:15px; font-weight:600; fill:var(--secondary-text-color); }
   g.cold, text.cold { color:#27b4ff; fill:#27b4ff; } g.warm, text.warm { color:#ffa43a; fill:#ffa43a; }
   .hunit { fill:#1a222d; stroke:#2c3848; stroke-width:2; }
   .light .hunit { fill:var(--secondary-background-color); stroke:var(--divider-color); }

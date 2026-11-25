@@ -56,7 +56,7 @@ Ze starszym YAML-em (v1.4) karta dalej działa na `ustaw_bieg`, `ustaw_program`,
    # prefix: nano_one          # początek ID encji z ESPHome (domyślnie nano_one)
    # title: Rekuperacja
    # theme: light             # jasny wygląd w kolorach motywu HA (domyślnie ciemny wg wzoru)
-   # niepewne: []             # które temperatury oznaczać "?" (domyślnie t_czerpnia, t_wywiew)
+   # niepewne: [t_czerpnia]   # które temperatury oznaczać "?" (domyślnie żadne)
    # tab: diagnostyka          # zakładka startowa
    # history_hours: 6          # ile godzin wstecz pokazuje ramki i log w Diagnostyce
    # entities:                 # gdy jakaś encja ma inne ID
@@ -180,6 +180,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v1.7** – pod YAML v1.8: kafle temperatur bez wartości pokazują „brak czujnika”, domyślnie bez znaku „?” przy czerpni i wywiewie (`niepewne:` dalej działa), sprawność odzysku mówi, którego czujnika brakuje.
 - **v1.6** – encje szukane też po urządzeniu (gdy HA nadał im inne ID niż `<prefix>_…`), w Diagnostyce i w kopiowanym logu lista brakujących encji sterujących oraz encji wyłączonych w rejestrze HA.
 - **v1.5** – karta sama włącza „Sterowanie z HA” przed zapisem (bez pytania i szukania przełącznika), komunikaty ✓/✗ po każdej zmianie, czerwony pasek „Wgraj na ESP YAML v1.6” z listą brakujących encji, pasek „ESP offline”, sekcja Sterowanie widoczna zawsze.
 - **v1.4** – każda wartość klikalna i edytowalna w karcie (wpisywanie liczb, kafle Bieg/Tryb/Temp. zadana i plakietki Bypass/Sezon otwierają wybór), karta przerysowuje się tylko przy zmianie encji `nano_one_*` i nigdy w trakcie kliknięcia (koniec skakania i gubienia klików), łapanie zdublowanych encji `_2`/`_3` z ostrzeżeniem w Diagnostyce.
