@@ -39,6 +39,8 @@ Wszystko zmieniasz w karcie, nie w encjach ESP. Przyciski pojawiają się, gdy w
 - klik w SEZON: Zima / Lato (`select.<prefix>_ustaw_sezon`)
 - Temperatury zadane z +/−: ręczna, dzień, noc, poza domem, 5–40 °C co 0,1 (`number.*`)
 - Biegi % z +/−: nawiew i wywiew dla biegów 1–3 i wietrzenia, 10–100 % (`number.*`)
+- **klik w samą wartość** (podkreśloną) otwiera pole do wpisania liczby z klawiatury (przecinek albo kropka), zapis przyciskiem OK albo Enterem, Esc anuluje
+- **klik w kafle** Bieg / Tryb otwiera wybór trybu, Temp. zadana otwiera temperatury zadane, plakietki Bypass / Sezon otwierają swoje listy (kafle z ołówkiem ✎ da się zmieniać)
 
 Ze starszym YAML-em (v1.4) karta dalej działa na `ustaw_bieg`, `ustaw_program`, przełączniku `wietrzenie` i `nadawanie_inext`.
 
@@ -178,6 +180,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v1.4** – każda wartość klikalna i edytowalna w karcie (wpisywanie liczb, kafle Bieg/Tryb/Temp. zadana i plakietki Bypass/Sezon otwierają wybór), karta przerysowuje się tylko przy zmianie encji `nano_one_*` i nigdy w trakcie kliknięcia (koniec skakania i gubienia klików), łapanie zdublowanych encji `_2`/`_3` z ostrzeżeniem w Diagnostyce.
 - **v1.3** – sterowanie z karty pod YAML v1.6: jeden wybór trybu (`ustaw_tryb`: ręczny stop/bieg 1–3, wg zegara, świąteczny, poza domem) z wskaźnika biegu i z PROGRAM, blokada „Sterowanie z HA (iNext)”, warianty nazw encji (karta działa ze starym i nowym YAML-em).
 - **v1.2** – wygląd wg wzoru (ciemny panel, schemat wymiennika z kaflami, wskaźnik biegu, pasek PROGRAM/BYPASS/SEZON/FILTR, plakietka PRACA), sterowanie pod YAML v1.4 (bieg, program, bypass, sezon, wietrzenie, temperatury zadane, % biegów) z blokadą „Nadawanie iNext”, w Diagnostyce ramki wysłane iNext i ostatnia wymiana iNext, opcje `theme` i `niepewne`.
 - **v1.1** – pod YAML v1.3: plakietki (wentylacja, bypass tryb, sezon, chłodzenie, wietrzenie, urlop, poza domem), sekcja Nastawy, znacznik „?” dla niepewnych encji, encje diagnostyczne przeniesione do Diagnostyki (surowe pola C14, rejestry, serwis, ustawienia ESP), wszystkie ramki C14 (Nano status/nastawy, E3 3A/3B, AERO, surowe bajty) z przełącznikiem źródła, więcej liczników magistrali.

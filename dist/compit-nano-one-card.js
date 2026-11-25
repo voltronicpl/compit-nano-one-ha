@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v1.3
+ * compit-nano-one-card  v1.4
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -17,7 +17,7 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v1.3';
+const VERSION = 'v1.4';
 
 // klucz: [domena, koncowka, opis, jednostka zapasowa]
 const DEFAULT_E = {
@@ -246,6 +246,16 @@ class CompitNanoOneCard extends HTMLElement {
     this._selFrame = 0;
   }
 
+  connectedCallback() {
+    if (this._hookedPtr) return;
+    this._hookedPtr = true;
+    this.shadowRoot.addEventListener('pointerdown', () => { this._holding = true; });
+    const up = () => { if (!this._holding) return; this._holding = false; if (this._dirty) { this._dirty = false; setTimeout(() => this._schedule(), 0); } };
+    this.shadowRoot.addEventListener('pointerup', up);
+    this.shadowRoot.addEventListener('pointercancel', up);
+    this.shadowRoot.addEventListener('pointerleave', up, true);
+  }
+
   static getStubConfig() { return { prefix: 'nano_one' }; }
   getCardSize() { return 8; }
 
@@ -254,29 +264,53 @@ class CompitNanoOneCard extends HTMLElement {
     this._prefix = String(this._config.prefix).replace(/\.$/, '').replace(/^[a-z_]+\./, '');
     if (this._config.tab) this._tab = this._config.tab;
     this._resolved = {};
+    this._idxSrc = null;
     this._histLoaded = false;
     this._schedule();
   }
 
   // ID encji dla klucza (z nadpisaniem i szukaniem w innych domenach)
+  // indeks encji z prefiksem, przebudowywany przy kazdej nowej wersji hass.states
+  _idx() {
+    const st = this._hass && this._hass.states;
+    if (!st) return [];
+    if (this._idxSrc !== st) {
+      this._idxSrc = st;
+      const pre = this._prefix + '_';
+      this._idxList = Object.keys(st).filter((id) => { const o = id.split('.')[1]; return o && o.startsWith(pre); });
+      this._resolved = {};
+    }
+    return this._idxList;
+  }
+
+  // ID encji dla klucza. v1.4: oprocz dokladnej nazwy lapie tez warianty z koncowka _2, _3...
+  // (HA dodaje je, gdy po zmianie nazwy w YAML stara encja zostala w rejestrze) i wybiera ta, ktora ma dane.
   _id(key) {
     const ov = this._config.entities && this._config.entities[key];
     if (ov) return ov;
-    if (this._resolved[key] && this._hass && this._hass.states[this._resolved[key]]) return this._resolved[key];
+    const list = this._idx();
+    if (this._resolved[key]) return this._resolved[key];
     const [dom, sufs] = DEFAULT_E[key];
-    // v1.3: koncowka moze miec warianty "a|b" (nazwy z roznych wersji YAML), pierwszy znaleziony wygrywa
     const alts = String(sufs).split('|');
-    let id = dom + '.' + this._prefix + '_' + alts[0];
-    if (this._hass && !this._hass.states[id]) {
-      search: for (const suf of alts) {
-        const obj = this._prefix + '_' + suf;
-        for (const d of [dom, 'sensor', 'binary_sensor', 'text_sensor', 'select', 'number', 'switch', 'fan', 'climate']) {
-          if (this._hass.states[d + '.' + obj]) { id = d + '.' + obj; break search; }
-        }
-      }
-    }
+    let best = null, bestScore = -1;
+    alts.forEach((suf, ai) => {
+      const re = new RegExp('^([a-z_]+)\\.' + this._prefix + '_' + suf + '(_(\\d+))?$');
+      list.forEach((id) => {
+        const m = id.match(re);
+        if (!m) return;
+        const s = this._hass.states[id];
+        const score = (s && !BAD.includes(s.state) ? 1000 : 0) + (m[1] === dom ? 100 : 0) + (10 - Math.min(ai, 9)) + (m[2] ? 0 : 1);
+        if (score > bestScore) { bestScore = score; best = id; }
+      });
+    });
+    const id = best || (dom + '.' + this._prefix + '_' + alts[0]);
     this._resolved[key] = id;
     return id;
+  }
+  // encje z koncowka _2, _3... (osierocone duplikaty po zmianie nazw w YAML)
+  _dupes() {
+    const list = this._idx();
+    return list.filter((id) => /_\d+$/.test(id) && !/(bieg|rejestr|f\d+|t\d+|wywiew|nawiew)_\d+$/.test(id) && list.includes(id.replace(/_\d+$/, '')));
   }
   _st(key) { return this._hass ? this._hass.states[this._id(key)] : undefined; }
   // "?" w nazwie encji z ESPHome = mapowanie niepewne
@@ -337,6 +371,12 @@ class CompitNanoOneCard extends HTMLElement {
       this._last[key] = st;
     }
     if (first || this._tab === 'diagnostyka') this._loadHistory();
+    // v1.4: HA podaje nowe hass przy KAZDEJ zmianie dowolnej encji w domu. Przerysowuj tylko,
+    // gdy zmienila sie ktoras encja z prefiksem - inaczej animacje skacza, a klik potrafi przepasc.
+    const ids = this._idx();
+    const changed = first || !this._seen || ids.length !== this._seen.size || ids.some((id) => this._seen.get(id) !== hass.states[id]);
+    if (!changed) return;
+    this._seen = new Map(ids.map((id) => [id, hass.states[id]]));
     this._schedule();
   }
 
@@ -378,6 +418,8 @@ class CompitNanoOneCard extends HTMLElement {
   }
 
   _schedule() {
+    // nie przerysowuj w trakcie klikniecia (miedzy wcisnieciem a puszczeniem)
+    if (this._holding || this._edit) { this._dirty = true; return; }
     if (this._renderPending) return;
     this._renderPending = true;
     requestAnimationFrame(() => { this._renderPending = false; this._render(); });
@@ -434,6 +476,14 @@ class CompitNanoOneCard extends HTMLElement {
     this.shadowRoot.querySelectorAll('[data-popclose]').forEach((el) => el.addEventListener('click', () => { this._pop = null; this._render(); }));
     this.shadowRoot.querySelectorAll('[data-opt]').forEach((el) => el.addEventListener('click', () => this._selectOpt(el.dataset.optkey, el.dataset.opt)));
     this.shadowRoot.querySelectorAll('[data-num]').forEach((el) => el.addEventListener('click', () => this._numStep(el.dataset.num, Number(el.dataset.dir))));
+    this.shadowRoot.querySelectorAll('[data-edit]').forEach((el) => el.addEventListener('click', (ev) => { ev.stopPropagation(); this._edit = el.dataset.edit; this._render(); }));
+    this.shadowRoot.querySelectorAll('[data-save]').forEach((el) => el.addEventListener('click', () => this._saveEdit(el.dataset.save, el.parentNode.querySelector('[data-inp]'))));
+    this.shadowRoot.querySelectorAll('[data-cancel]').forEach((el) => el.addEventListener('click', () => { this._edit = null; this._render(); }));
+    this.shadowRoot.querySelectorAll('[data-inp]').forEach((el) => el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') this._saveEdit(el.dataset.inp, el); if (ev.key === 'Escape') { this._edit = null; this._render(); } }));
+    const inp = this.shadowRoot.querySelector('[data-inp]');
+    if (inp) {
+      if (this._focusEdit !== this._edit) { this._focusEdit = this._edit; setTimeout(() => { inp.focus(); inp.select(); }, 0); }
+    } else this._focusEdit = null;
     this.shadowRoot.querySelectorAll('[data-wiet]').forEach((el) => el.addEventListener('click', () => {
       const w = this._st('sw_wietrz'); if (!w) return;
       this._call('switch', w.state === 'on' ? 'turn_off' : 'turn_on', { entity_id: w.entity_id }, 'Wietrzenie → ' + (w.state === 'on' ? 'WYŁ.' : 'WŁ.'));
@@ -599,6 +649,11 @@ class CompitNanoOneCard extends HTMLElement {
 
   _renderPop() {
     if (!this._pop) return '';
+    if (this._pop === 'temp') {
+      const t = ['t_reczna', 't_dzien', 't_noc', 't_poza'].map((k) => this._numCtl(k, 1)).join('');
+      if (!t) return '';
+      return `<div class="pop"><div class="poph">Temperatury zadane${this._canWrite() ? '' : ' <span class="warn">(zapis wyłączony, włącz „Sterowanie z HA”)</span>'}<button class="mini x" data-popclose>✕</button></div><div class="nwrap">${t}</div></div>`;
+    }
     const key = 'set_' + this._pop;
     const s = this._st(key);
     if (!s) return '';
@@ -613,14 +668,7 @@ class CompitNanoOneCard extends HTMLElement {
   _renderControls() {
     const has = (k) => !!this._st(k);
     const can = this._canWrite();
-    const numCtl = (k, digits) => {
-      if (!has(k)) return '';
-      const s = this._st(k), v = num(s), u = s.attributes.unit_of_measurement || DEFAULT_E[k][3];
-      return `<div class="nctl"><span class="nl" data-e="${esc(s.entity_id)}">${esc(DEFAULT_E[k][2])}</span>
-        <button class="pm" data-num="${k}" data-dir="-1" ${can ? '' : 'disabled'}>−</button>
-        <b class="nv">${v === null ? '—' : v.toFixed(digits).replace('.', ',')}<small> ${esc(u)}</small></b>
-        <button class="pm" data-num="${k}" data-dir="1" ${can ? '' : 'disabled'}>+</button></div>`;
-    };
+    const numCtl = (k, digits) => this._numCtl(k, digits);
     const nadaw = this._st('nadawanie');
     const wiet = this._st('sw_wietrz');
     const temps = ['t_reczna', 't_dzien', 't_noc', 't_poza'].map((k) => numCtl(k, 1)).join('');
@@ -648,7 +696,54 @@ class CompitNanoOneCard extends HTMLElement {
     const s = this._st(k);
     if (!s) return '<span class="mute">—</span>';
     const v = num(s);
-    return `<span class="pc"><button class="pm" data-num="${k}" data-dir="-1" ${can ? '' : 'disabled'}>−</button><b data-e="${esc(s.entity_id)}">${v === null ? '—' : Math.round(v) + '%'}</b><button class="pm" data-num="${k}" data-dir="1" ${can ? '' : 'disabled'}>+</button></span>`;
+    if (this._edit === k) return this._editor(k);
+    return `<span class="pc"><button class="pm" data-num="${k}" data-dir="-1" ${can ? '' : 'disabled'}>−</button><b class="edv" data-edit="${k}" title="kliknij, by wpisać wartość">${v === null ? '—' : Math.round(v) + '%'}</b><button class="pm" data-num="${k}" data-dir="1" ${can ? '' : 'disabled'}>+</button></span>`;
+  }
+
+  // v1.4: pole z liczba + przyciski -/+; klik w wartosc = wpisanie liczby z klawiatury
+  // ktory wybor otworzyc po kliknieciu w kafel / plakietke (gdy jest encja sterujaca)
+  _popFor(key) {
+    const tr = this._st('set_tryb') ? 'tryb' : null;
+    const map = { tryb: tr || 'program', bieg: tr || 'bieg', bieg_zadany: tr || 'bieg', sezon: 'sezon', sezon_rej: 'sezon', bypass_tryb: 'bypass', bypass: 'bypass', bypass_rej: 'bypass', t_zadana: 'temp' };
+    const pp = map[key];
+    if (!pp) return null;
+    if (pp === 'temp') return ['t_reczna', 't_dzien', 't_noc', 't_poza'].some((k) => this._st(k)) ? 'temp' : null;
+    return this._st('set_' + pp) ? pp : null;
+  }
+
+  _numCtl(k, digits) {
+    const s = this._st(k);
+    if (!s) return '';
+    const can = this._canWrite();
+    const v = num(s), u = s.attributes.unit_of_measurement || DEFAULT_E[k][3];
+    return `<div class="nctl"><span class="nl" data-e="${esc(s.entity_id)}">${esc(DEFAULT_E[k][2])}</span>
+      ${this._edit === k ? this._editor(k) : `<button class="pm" data-num="${k}" data-dir="-1" ${can ? '' : 'disabled'}>−</button>
+      <b class="nv edv" data-edit="${k}" title="kliknij, by wpisać wartość">${v === null ? '—' : v.toFixed(digits).replace('.', ',')}<small> ${esc(u)}</small></b>
+      <button class="pm" data-num="${k}" data-dir="1" ${can ? '' : 'disabled'}>+</button>`}</div>`;
+  }
+
+  _editor(k) {
+    const s = this._st(k), a = s.attributes, can = this._canWrite();
+    return `<span class="ned"><input type="text" inputmode="decimal" class="ninp" data-inp="${k}" value="${esc(s.state)}"
+      ${a.min !== undefined ? `min="${a.min}"` : ''} ${a.max !== undefined ? `max="${a.max}"` : ''} step="${a.step || 1}">
+      <button class="mini ok" data-save="${k}" ${can ? '' : 'disabled'}>OK</button><button class="mini" data-cancel>✕</button>
+      ${can ? '' : '<span class="warn small">zapis wyłączony</span>'}</span>`;
+  }
+
+  _saveEdit(k, inp) {
+    inp = inp || this.shadowRoot.querySelector(`[data-inp="${k}"]`);
+    const s = this._st(k);
+    if (!inp || !s) return;
+    let v = parseFloat(String(inp.value).replace(',', '.'));
+    if (isNaN(v)) return;
+    const a = s.attributes;
+    if (a.min !== undefined) v = Math.max(Number(a.min), v);
+    if (a.max !== undefined) v = Math.min(Number(a.max), v);
+    const step = Number(a.step) || 1;
+    v = Number((Math.round(v / step) * step).toFixed(3));
+    this._edit = null; this._dirty = false;
+    this._call('number', 'set_value', { entity_id: s.entity_id, value: v }, DEFAULT_E[k][2] + ' → ' + v + (a.unit_of_measurement ? ' ' + a.unit_of_measurement : ''));
+    this._render();
   }
 
   // ---------------- zakladka Rekuperator ----------------
@@ -663,7 +758,8 @@ class CompitNanoOneCard extends HTMLElement {
 
     const tile = (key, digits, big) => {
       const id = this._id(key);
-      return `<div class="tile ${big ? 'big' : ''} ${this._has(key) ? '' : 'dim'}" data-e="${esc(id)}">
+      const pp = this._popFor(key);
+      return `<div class="tile ${big ? 'big' : ''} ${this._has(key) ? '' : 'dim'} ${pp ? 'click' : ''}" ${pp ? `data-pop="${pp}"` : `data-e="${esc(id)}"`}>
         <div class="tl2">${esc(DEFAULT_E[key][2])}${this._q(id)}</div><div class="tv2">${this._val(key, digits)}</div></div>`;
     };
     const flag = (key) => {
@@ -671,7 +767,8 @@ class CompitNanoOneCard extends HTMLElement {
       const bin = s && /^(on|off)$/.test(s.state);
       const on = s && (s.state === 'on' || (!bin && !BAD.includes(s.state) && !/^(off|wył|wyl|nie|brak|0|nieaktywn)/i.test(s.state)));
       const txt = s && !BAD.includes(s.state) ? (bin ? (on ? ' ✓' : '') : ': ' + esc(s.state)) : '';
-      return `<span class="flag ${!s || BAD.includes(s.state) ? 'mute' : on ? 'on' : ''}" data-e="${esc(this._id(key))}">${esc(DEFAULT_E[key][2])}${this._q(this._id(key))}${txt}</span>`;
+      const pp = this._popFor(key);
+      return `<span class="flag ${!s || BAD.includes(s.state) ? 'mute' : on ? 'on' : ''} ${pp ? 'click' : ''}" ${pp ? `data-pop="${pp}"` : `data-e="${esc(this._id(key))}"`}>${esc(DEFAULT_E[key][2])}${this._q(this._id(key))}${txt}</span>`;
     };
     const filtr = this._st('filtr');
     const filtrWarn = filtr && !BAD.includes(filtr.state) && /(wymie|brud|zabr|alarm|on|1)/i.test(filtr.state);
@@ -821,6 +918,7 @@ class CompitNanoOneCard extends HTMLElement {
         <div class="mute small">Wszystkie zmiany wszystkich encji <code>${esc(pre)}*</code> z historii HA (diagnostyka ESP, surowe ramki C14, temperatury, alarmy…) + stan bieżący, posortowane po czasie.</div>
         ${this._fullText ? `<textarea readonly class="fulltxt">${esc(this._fullText)}</textarea>` : ''}
       </div>
+      ${(() => { const d = this._dupes(); return d.length ? `<div class="warnbox">W HA są zdublowane encje z końcówką _2/_3 (stare zostały w rejestrze po zmianie nazw w YAML): ${d.map((x) => `<code>${esc(x)}</code>`).join(' ')}. Karta bierze tę, która ma dane. Stare, nieaktywne usuniesz w HA: Ustawienia → Urządzenia → Encje.</div>` : ''; })()}
       <div class="sec"><h3>ESP</h3>${espTbl}</div>
       <div class="sec"><h3>Magistrala RS485 / C14</h3>${busTbl}</div>
       <div class="sec">
@@ -1048,6 +1146,14 @@ const CSS = `
   .ptab td:first-child { text-align:left; color:var(--secondary-text-color); }
   .pc { display:inline-flex; align-items:center; gap:8px; }
   .pc b { min-width:42px; display:inline-block; cursor:pointer; }
+  .edv { cursor:text; border-bottom:1px dashed var(--secondary-text-color); padding:0 2px; }
+  .edv:hover { color:var(--primary-color); border-bottom-color:var(--primary-color); }
+  .ned { display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .ninp { width:76px; font:inherit; font-size:1em; padding:5px 8px; border-radius:8px; border:1px solid var(--primary-color); background:var(--card-background-color,#fff); color:var(--primary-text-color); }
+  .mini.ok { border-color:var(--primary-color); color:var(--primary-color); font-weight:700; }
+  .tile.click, .flag.click { cursor:pointer; }
+  .tile.click:hover { outline:1px solid var(--primary-color); }
+  .tile.click .tv2::after { content:' ✎'; font-size:.6em; color:var(--secondary-text-color); }
   @media (max-width:420px) { .pm { width:26px; height:26px; } .pc { gap:4px; } .pc b { min-width:36px; } .ptab td, .ptab th { padding:3px 1px; } .body { padding:10px 10px; } }
   :host { display:block; }
   ha-card { overflow:hidden; display:block; }
