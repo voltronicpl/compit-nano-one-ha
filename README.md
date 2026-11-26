@@ -58,6 +58,7 @@ Ze starszym YAML-em (v1.4) karta dalej działa na `ustaw_bieg`, `ustaw_program`,
    # theme: light             # jasny wygląd w kolorach motywu HA (domyślnie ciemny wg wzoru)
    # niepewne: [t_czerpnia]   # które temperatury oznaczać "?" (domyślnie żadne)
    # tab: diagnostyka          # zakładka startowa
+   # zewn: sensor.hydrolution_temperatura_zewnetrzna_bt1   # temp. zewnętrzna z pompy ciepła (BT1), false = bez kafla
    # history_hours: 6          # ile godzin wstecz pokazuje ramki i log w Diagnostyce
    # entities:                 # gdy jakaś encja ma inne ID
    #   t_nawiew: sensor.moja_temperatura_nawiewu
@@ -178,8 +179,14 @@ Kafle encji, których nie ma w HA (np. filtry, alarm, CO₂ w YAML v1.3), są uk
 
 Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają do „Pozostałe z ESP” na Rekuperatorze. Są w Diagnostyce, w sekcjach **Surowe pola C14**, **Rejestry Nano**, **Parametry serwisowe** i **Ustawienia ESP**.
 
+## Powiązane repo
+
+- [ha-karta-pompa-ciepla](https://github.com/voltronicpl/ha-karta-pompa-ciepla) – karta pompy MHI Hydrolution. Od v1.8 ta karta pokazuje kafel **Na zewnątrz (pompa BT1)** z czujnika pompy i różnicę względem czerpni (duża różnica = GWC albo nagrzewnica grzeje czerpnię). Inna nazwa encji: `zewn:` w karcie, bez kafla: `zewn: false`. Karta pompy od v1.51 pokazuje z kolei temp. pokoju, CO₂ i wilgotność z reku.
+- [ems](https://github.com/voltronicpl/ems) – EMS falownika. Moc albo energię reku można podać w EMS jako źródło „Rekuperacja” (Ustawienia → Historia do nauki, od v0.6.68).
+
 ## Wersje
 
+- **v1.8** – kafel **Na zewnątrz (pompa BT1)**: temperatura zewnętrzna z pompy ciepła (`sensor.hydrolution_temperatura_zewnetrzna_bt1`, opcja `zewn:`) i różnica do czerpni. Bez encji pompy kafla nie ma.
 - **v1.7** – pod YAML v1.8: kafle temperatur bez wartości pokazują „brak czujnika”, domyślnie bez znaku „?” przy czerpni i wywiewie (`niepewne:` dalej działa), sprawność odzysku mówi, którego czujnika brakuje.
 - **v1.6** – encje szukane też po urządzeniu (gdy HA nadał im inne ID niż `<prefix>_…`), w Diagnostyce i w kopiowanym logu lista brakujących encji sterujących oraz encji wyłączonych w rejestrze HA.
 - **v1.5** – karta sama włącza „Sterowanie z HA” przed zapisem (bez pytania i szukania przełącznika), komunikaty ✓/✗ po każdej zmianie, czerwony pasek „Wgraj na ESP YAML v1.6” z listą brakujących encji, pasek „ESP offline”, sekcja Sterowanie widoczna zawsze.

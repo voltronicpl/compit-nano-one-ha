@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v1.7
+ * compit-nano-one-card  v1.8
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -10,6 +10,7 @@
  *   theme: dark               # opcjonalnie: dark (domyslnie, wg wzoru) | light (kolory motywu HA)
  *   niepewne: [t_czerpnia]    # opcjonalnie, klucze oznaczane "?" (niepewne mapowanie); domyslnie zadne
  *   history_hours: 6          # opcjonalnie, ile godzin wstecz czytac log i ramki w Diagnostyce
+ *   zewn: sensor.hydrolution_temperatura_zewnetrzna_bt1   # v1.8: temp. zewnetrzna z pompy ciepla (BT1); zewn: false = bez kafla
  *   entities:                 # opcjonalnie, nadpisanie pojedynczych encji
  *     t_nawiew: sensor.moja_temperatura_nawiewu
  *
@@ -17,7 +18,7 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v1.7';
+const VERSION = 'v1.8';
 
 // klucz: [domena, koncowka, opis, jednostka zapasowa]
 const DEFAULT_E = {
@@ -329,6 +330,18 @@ class CompitNanoOneCard extends HTMLElement {
     return list.filter((id) => /_\d+$/.test(id) && !/(bieg|rejestr|f\d+|t\d+|wywiew|nawiew)_\d+$/.test(id) && list.includes(id.replace(/_\d+$/, '')));
   }
   _st(key) { return this._hass ? this._hass.states[this._id(key)] : undefined; }
+  // v1.8: temperatura zewnetrzna z pompy ciepla (karta ha-karta-pompa-ciepla, czujnik BT1) - pewniejsza niz czerpnia (GWC, nagrzewnica)
+  _zewnId() { const z = this._config && this._config.zewn; return z === false ? null : (z || 'sensor.hydrolution_temperatura_zewnetrzna_bt1'); }
+  _zewnTile() {
+    const id = this._zewnId(), s = id && this._hass ? this._hass.states[id] : undefined;
+    if (!s) return '';
+    const v = num(s), cz = num(this._st('t_czerpnia'));
+    const unit = s.attributes.unit_of_measurement || '°C';
+    const val = BAD.includes(s.state) || v === null ? '<span class="mute">' + (s.state === 'unavailable' ? 'niedostępne' : '—') + '</span>' : esc(v.toFixed(1)) + '<small> ' + esc(unit) + '</small>';
+    const d = v !== null && cz !== null ? cz - v : null;
+    const sub = d === null ? '' : `<div class="tl2" style="margin-top:2px">czerpnia ${d >= 0 ? '+' : '−'}${esc(Math.abs(d).toFixed(1))} °C${Math.abs(d) >= 2 ? ' (GWC / nagrzewnica?)' : ''}</div>`;
+    return `<div class="tile" data-e="${esc(id)}"><div class="tl2">Na zewnątrz (pompa BT1)</div><div class="tv2">${val}</div>${sub}</div>`;
+  }
   // "?" w nazwie encji z ESPHome = mapowanie niepewne
   _unsure(id) {
     const s = this._hass && this._hass.states[id];
@@ -394,7 +407,8 @@ class CompitNanoOneCard extends HTMLElement {
     if (first || this._tab === 'diagnostyka') this._loadHistory();
     // v1.4: HA podaje nowe hass przy KAZDEJ zmianie dowolnej encji w domu. Przerysowuj tylko,
     // gdy zmienila sie ktoras encja z prefiksem - inaczej animacje skacza, a klik potrafi przepasc.
-    const ids = this._idx();
+    const zid = this._zewnId();   // v1.8: zmiana BT1 z pompy tez przerysowuje
+    const ids = zid ? this._idx().concat([zid]) : this._idx();
     const changed = first || !this._seen || ids.length !== this._seen.size || ids.some((id) => this._seen.get(id) !== hass.states[id]);
     if (!changed) return;
     this._seen = new Map(ids.map((id) => [id, hass.states[id]]));
@@ -872,7 +886,7 @@ class CompitNanoOneCard extends HTMLElement {
       <div class="grid">
         ${tile('bieg', undefined, true)}${tile('tryb', undefined, true)}
         ${opt('bieg_zadany')}${opt('harmonogram')}${opt('tryb_term')}
-        ${tile('t_pokoj', 1)}${tile('t_zadana', 1)}
+        ${tile('t_pokoj', 1)}${tile('t_zadana', 1)}${this._zewnTile()}
         ${opt('wilgotnosc', 0)}${opt('co2', 0)}
         ${opt('przeplyw', 0)}${opt('obroty_nawiew', 0)}${opt('obroty_wywiew', 0)}
         ${opt('t_nagrzewnica', 1)}${opt('t_gwc', 1)}${opt('sprawnosc', 0)}
