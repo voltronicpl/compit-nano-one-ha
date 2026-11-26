@@ -72,7 +72,7 @@ Stare automatyki z v1.9–v2.2 (`compit_rekuperacja_harmonogram`, `_strefa_1`, `
 
 **Lewy pasek:** przy każdym otwarciu (konto administratora) karta sprawdza, czy w HA jest panel **Rekuperacja** (`/rekuperacja-nano`) z tą kartą na cały ekran, i jak go nie ma, zakłada go sama. Jak HA odmówi, na górze zakładki Rekuperator jest pasek z przyciskiem, błędem z HA i instrukcją do dodania ręcznie. Wyłączysz to opcją `sidebar: false`.
 
-Mapa w Strefach to od v2.6 **OpenStreetMap bez żadnego klucza API** (biblioteka Leaflet z unpkg, a jak nie wejdzie, to z jsdelivr; potrzebny internet). W ciemnym motywie podkład jest przyciemniony. Klik w mapę stawia znacznik środka wybranej strefy (przyciski Strefa 1 / Strefa 2 nad mapą) i rysuje okrąg z promieniem. Opcje karty: `map: ha` = stara mapa HA (ha-map), `map_tiles: <adres>` = własny podkład. Jak mapa nie wstanie, karta pisze dlaczego, a środek strefy wpisujesz ręcznie.
+Mapa w Strefach to od v2.6 **OpenStreetMap bez żadnego klucza API** (biblioteka Leaflet 1.9.4 wbudowana w plik karty od v2.7, bez CDN; internet potrzebny tylko na kafelki mapy z tile.openstreetmap.org). W ciemnym motywie podkład jest przyciemniony. Klik w mapę stawia znacznik środka wybranej strefy (przyciski Strefa 1 / Strefa 2 nad mapą) i rysuje okrąg z promieniem. Opcje karty: `map: ha` = stara mapa HA (ha-map), `map_tiles: <adres>` = własny podkład. Jak mapa nie wstanie, karta pisze dlaczego, a środek strefy wpisujesz ręcznie.
 
 **Harmonogram strefy 1** (pod mapą w Strefach, strefa 2 bez zmian):
 1. **Wjazd** (pierwszy telefon): wietrzenie na X min z % nawiewu i wywiewu.
@@ -227,6 +227,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v2.7** – Leaflet (licencja BSD-2) wbudowany w plik karty, więc mapa nie zależy od unpkg/jsdelivr; CDN zostaje tylko jako zapas; karta nie nadpisuje globalnego `window.L`.
 - **v2.6** – mapa w Strefach domyślnie na OpenStreetMap bez klucza API (zamiast mapy HA / CARTO), Leaflet z unpkg albo jsdelivr, komunikat gdy podkład się nie ładuje, opcje `map: ha` i `map_tiles:`.
 - **v2.5** – w Strefach sekcja **Harmonogram strefy 1**: wjazd (wietrzenie min + %), wyjazd (nowe: wietrzenie po wyjeździe min + %), nikogo nie ma (tryb + %), wietrzenie co jakiś czas, czujniki światło / woda / światło+woda osobno (%, czas po wyłączeniu, najsilniejszy wygrywa), harmonogram tygodniowy pod spodem.
 - **v2.4** – mapa w Strefach znowu działa: jak mapa HA (ha-map) nie wstanie, karta ładuje Leaflet z unpkg; klik w mapę stawia znacznik środka strefy i rysuje okrąg; w PROGRAM nowa opcja **Strefa** (sterownik wg stref), ręczny wybór trybu wyłącza Strefę.
