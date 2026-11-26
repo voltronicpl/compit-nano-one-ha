@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v2.5
+ * compit-nano-one-card  v2.6
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -10,6 +10,8 @@
  *   sidebar: false            # opcjonalnie, nie tworz panelu "Rekuperacja" w lewym pasku i nie pokazuj paska z przyciskiem
  *   theme: dark               # opcjonalnie: dark (domyslnie, wg wzoru) | light (kolory motywu HA)
  *   niepewne: [t_czerpnia]    # opcjonalnie, klucze oznaczane "?" (niepewne mapowanie); domyslnie zadne
+ *   map: osm               # v2.6: osm (domyslnie, bez klucza API) | ha (mapa HA, ha-map)
+ *   map_tiles: https://tile.openstreetmap.org/{z}/{x}/{y}.png   # opcjonalnie wlasny podklad
  *   history_hours: 6          # opcjonalnie, ile godzin wstecz czytac log i ramki w Diagnostyce
  *   zewn: sensor.hydrolution_temperatura_zewnetrzna_bt1   # v1.8: temp. zewnetrzna z pompy ciepla (BT1); zewn: false = bez kafla
  *   entities:                 # opcjonalnie, nadpisanie pojedynczych encji
@@ -19,9 +21,12 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v2.5';
+const VERSION = 'v2.6';
 // v2.4: Leaflet z unpkg jako zapas, gdy mapa HA (ha-map) nie wstanie
-const LEAFLET_URL = 'https://unpkg.com/leaflet@1.9.4/dist/';
+// v2.6: kilka CDN po kolei, podklad OpenStreetMap bez klucza API
+const LEAFLET_CDN = ['https://unpkg.com/leaflet@1.9.4/dist/', 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/'];
+let LEAFLET_URL = LEAFLET_CDN[0];
+const OSM_TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 let LEAFLET_P = null;
 // v1.9: automatyki i strefy tworzone przez karte, panel w pasku bocznym
 const AUTO_IDS = ['compit_rekuperacja_sterownik'];
@@ -1785,7 +1790,7 @@ class CompitNanoOneCard extends HTMLElement {
       this._mapWrap = document.createElement('div');
       this._mapWrap.slot = 'map';
       this._mapWrap.style.cssText = 'display:block;height:360px;border-radius:12px;overflow:hidden;border:1px solid rgba(127,127,127,.35);margin:6px 0 4px;position:relative;';
-      this._mapWrap.innerHTML = '<div style="padding:20px;opacity:.7;font-size:.88em">Ładuję mapę HA…</div>';
+      this._mapWrap.innerHTML = '<div style="padding:20px;opacity:.7;font-size:.88em">Ładuję mapę…</div>';
       this.appendChild(this._mapWrap);
     }
     if (this._haMap && this._haMap.leafletMap && this._haMap.Leaflet && this._haMap.leafletMap !== this._map) this._bindMap(this._haMap.Leaflet, this._haMap.leafletMap);
@@ -1794,11 +1799,11 @@ class CompitNanoOneCard extends HTMLElement {
     this._mapLoading = true;
     (async () => {
       let ok = false, why = '';
-      try { ok = await this._tryHaMap(); } catch (e) { why = e.message; }
+      if (this._config.map === 'ha') { try { ok = await this._tryHaMap(); } catch (e) { why = e.message; } }
       if (!ok) {
         // v2.4: mapa HA nie wstala -> wlasny Leaflet z unpkg (jak w v1.9)
         if (this._haMap) { try { this._haMap.remove(); } catch (e) { /* nic */ } this._haMap = null; }
-        this._pushLog({ t: new Date(), e: 'karta', s: 'Mapa HA nie wstała' + (why ? ' (' + why + ')' : '') + ' – ładuję Leaflet z unpkg' });
+        if (this._config.map === 'ha') this._pushLog({ t: new Date(), e: 'karta', s: 'Mapa HA nie wstała' + (why ? ' (' + why + ')' : '') + ' – ładuję OpenStreetMap' });
         await this._ownMap();
       }
     })().catch((e) => {
@@ -1833,13 +1838,21 @@ class CompitNanoOneCard extends HTMLElement {
   _loadLeaflet() {
     if (window.L && window.L.map && window.L.circle) return Promise.resolve(window.L);
     if (!LEAFLET_P) {
-      LEAFLET_P = new Promise((res, rej) => {
+      const one = (base) => new Promise((res, rej) => {
         const sc = document.createElement('script');
-        sc.src = LEAFLET_URL + 'leaflet.js';
+        sc.src = base + 'leaflet.js';
         sc.onload = () => (window.L && window.L.map ? res(window.L) : rej(new Error('Leaflet wczytany, ale pusty')));
-        sc.onerror = () => { LEAFLET_P = null; rej(new Error('nie wczytałem Leaflet z unpkg (brak internetu?)')); };
+        sc.onerror = () => { sc.remove(); rej(new Error('nie wczytałem ' + base)); };
         document.head.appendChild(sc);
       });
+      LEAFLET_P = (async () => {
+        let last;
+        for (const base of LEAFLET_CDN) {
+          try { const L = await one(base); LEAFLET_URL = base; return L; } catch (e) { last = e; }
+        }
+        LEAFLET_P = null;
+        throw new Error('nie wczytałem biblioteki mapy (unpkg ani jsdelivr) – brak internetu albo blokada w przeglądarce');
+      })();
     }
     return LEAFLET_P;
   }
@@ -1847,7 +1860,10 @@ class CompitNanoOneCard extends HTMLElement {
   async _ownMap() {
     const L = await this._loadLeaflet();
     const dark = this._config.theme !== 'light';
-    this._mapWrap.innerHTML = `<link rel="stylesheet" href="${LEAFLET_URL}leaflet.css">`;
+    const custom = typeof this._config.map_tiles === 'string' && this._config.map_tiles;
+    this._mapWrap.className = 'cnoc-map' + (dark && !custom ? ' cnoc-dark' : '');
+    this._mapWrap.innerHTML = `<link rel="stylesheet" href="${LEAFLET_URL}leaflet.css">
+      <style>.cnoc-dark .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.9);}.cnoc-map .leaflet-container{background:#1b2430;font:inherit;}</style>`;
     const box = document.createElement('div');
     box.style.cssText = 'position:absolute;inset:0;';
     this._mapWrap.appendChild(box);
@@ -1855,8 +1871,20 @@ class CompitNanoOneCard extends HTMLElement {
     const h = this._hass.config || {};
     const c = z ? [Number(z.lat), Number(z.lon)] : [h.latitude || 52.2297, h.longitude || 21.0122];
     const map = L.map(box, { zoomControl: true }).setView(c, 15);
-    L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark ? 'dark_all' : 'rastertiles/voyager'}/{z}/{x}/{y}{r}.png`,
-      { maxZoom: 20, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO' }).addTo(map);
+    const tl = L.tileLayer(custom || OSM_TILES, { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+    let bad = 0, good = 0;
+    tl.on('tileload', () => { good++; });
+    tl.on('tileerror', () => {
+      bad++;
+      if (bad === 6 && !good) this._pushLog({ t: new Date(), e: 'karta', s: 'Mapa: podkład się nie ładuje (' + (custom || OSM_TILES) + ')' });
+      if (bad >= 6 && !good && !box.querySelector('.cnoc-tilemsg')) {
+        const d = document.createElement('div');
+        d.className = 'cnoc-tilemsg';
+        d.style.cssText = 'position:absolute;left:8px;right:8px;bottom:22px;z-index:500;padding:6px 8px;border-radius:8px;background:rgba(0,0,0,.65);color:#fff;font-size:.8em;pointer-events:none';
+        d.textContent = 'Podkład mapy się nie ładuje (brak internetu / blokada). Okręgi i znaczniki działają dalej.';
+        box.appendChild(d);
+      }
+    });
     this._bindMap(L, map);
   }
 
