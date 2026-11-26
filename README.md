@@ -74,6 +74,16 @@ Stare automatyki z v1.9–v2.2 (`compit_rekuperacja_harmonogram`, `_strefa_1`, `
 
 Mapa w Strefach to wbudowana mapa HA (ta sama co w karcie Mapa, z tym samym podkładem). Jak HA jej nie da w kilka sekund, karta sama ładuje Leaflet z unpkg (podkład CARTO/OpenStreetMap, potrzebny internet). Klik w mapę stawia znacznik środka wybranej strefy (przyciski Strefa 1 / Strefa 2 nad mapą) i rysuje okrąg z promieniem. Jak nie wstanie żadna, karta pisze dlaczego, a środek strefy wpisujesz ręcznie.
 
+**Harmonogram strefy 1** (pod mapą w Strefach, strefa 2 bez zmian):
+1. **Wjazd** (pierwszy telefon): wietrzenie na X min z % nawiewu i wywiewu.
+2. **Wyjazd** (ostatni telefon wyszedł): wietrzenie po wyjeździe na X min z % nawiewu/wywiewu (przełącznik `input_boolean.rekuperacja_wietrzenie_wyjazd`, karta zakłada go przy zapisie i sama gasi po czasie).
+3. **Nikogo nie ma**: tryb (i % przy trybie z biegiem) po wietrzeniu.
+4. **Wietrzenie co jakiś czas**: cykle dzień/noc (co ile h, na ile min, %), te same co w zakładce Harmonogram.
+5. **Czujniki**: lista świateł i lista czujników wody, a do tego trzy osobne ustawienia: **tylko światło**, **tylko woda**, **światło i woda naraz** (każde z własnym nawiewem, wywiewem i czasem „po wyłączeniu jeszcze X min”). Woda jest aktywna, gdy stan to `on` albo wartość jest większa od progu. Jak pasuje kilka naraz, wygrywa ten z większą sumą nawiew + wywiew.
+6. **Harmonogram tygodniowy**: ten sam co w zakładce Harmonogram, działa gdy ktoś jest w strefie.
+
+Kolejność w sterowniku: nikogo w strefie 1 → wietrzenie po wyjeździe → strefa 2 / „nikogo nie ma”; ktoś jest → wietrzenie wjazdu → czujniki → reguły → cykle → harmonogram.
+
 **PROGRAM → Strefa:** w wyborze trybu (tam gdzie Ręczny Stop / Ręczny bieg 1–3) jest opcja **Strefa**. Włącza sterownik i od razu go odpala, więc tryb i % idą wg tego, co ustawione w Strefach (wyjazd, strefa 2, a w domu harmonogram z regułami). Na pasku widać wtedy `STREFA · <tryb>`. Wybór innego trybu ręcznie wyłącza Strefę (sterownik), żeby po minucie nie nadpisał ręcznego wyboru. Strefa działa dopiero po kliknięciu **Zapisz w HA** w zakładce Strefy.
 
 ## Instalacja przez HACS
@@ -217,6 +227,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v2.5** – w Strefach sekcja **Harmonogram strefy 1**: wjazd (wietrzenie min + %), wyjazd (nowe: wietrzenie po wyjeździe min + %), nikogo nie ma (tryb + %), wietrzenie co jakiś czas, czujniki światło / woda / światło+woda osobno (%, czas po wyłączeniu, najsilniejszy wygrywa), harmonogram tygodniowy pod spodem.
 - **v2.4** – mapa w Strefach znowu działa: jak mapa HA (ha-map) nie wstanie, karta ładuje Leaflet z unpkg; klik w mapę stawia znacznik środka strefy i rysuje okrąg; w PROGRAM nowa opcja **Strefa** (sterownik wg stref), ręczny wybór trybu wyłącza Strefę.
 - **v2.3** – jeden sterownik w HA zamiast 3 automatyk: harmonogram tylko gdy ktoś w strefie, noc, reguły z encji HA (np. łazienka), cykle dzień/noc, przełącznik `input_boolean.rekuperacja_wietrzenie`, linia „teraz steruje”; harmonogram jako wykres tygodniowy z przeciąganiem; mapa nie wraca na środek, przeciąganie środka i promienia; na szerokim ekranie mały schemat i 2–3 kolumny.
 - **v2.2** – panel w lewym pasku sprawdzany przy każdym otwarciu, pasek z przyciskiem „Dodaj Rekuperację do lewego paska”, błędem z HA i instrukcją ręczną; mapa w Strefach z HA (ha-map) zamiast unpkg / OpenStreetMap.

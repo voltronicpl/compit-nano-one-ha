@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v2.4
+ * compit-nano-one-card  v2.5
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -19,7 +19,7 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v2.4';
+const VERSION = 'v2.5';
 // v2.4: Leaflet z unpkg jako zapas, gdy mapa HA (ha-map) nie wstanie
 const LEAFLET_URL = 'https://unpkg.com/leaflet@1.9.4/dist/';
 let LEAFLET_P = null;
@@ -27,6 +27,9 @@ let LEAFLET_P = null;
 const AUTO_IDS = ['compit_rekuperacja_sterownik'];
 const OLD_IDS = ['compit_rekuperacja_harmonogram', 'compit_rekuperacja_strefa_1', 'compit_rekuperacja_strefa_2']; // v1.9-v2.2, kasowane przy zapisie
 const WIET_BOOL = 'input_boolean.rekuperacja_wietrzenie';
+// v2.5: wietrzenie po wyjezdzie ze strefy 1 (osobny przelacznik, sam gasnie po X min)
+const WYJ_BOOL = 'input_boolean.rekuperacja_wietrzenie_wyjazd';
+const TRG = [['l', 'Tylko światło'], ['w', 'Tylko woda'], ['lw', 'Światło i woda naraz']];
 const LS_CFG = 'compit-nano-one-plan';
 const SB_URL = 'rekuperacja-nano';
 const DAYS = [['mon', 'Pn'], ['tue', 'Wt'], ['wed', 'Śr'], ['thu', 'Cz'], ['fri', 'Pt'], ['sat', 'So'], ['sun', 'Nd']];
@@ -433,7 +436,7 @@ class CompitNanoOneCard extends HTMLElement {
     // v1.4: HA podaje nowe hass przy KAZDEJ zmianie dowolnej encji w domu. Przerysowuj tylko,
     // gdy zmienila sie ktoras encja z prefiksem - inaczej animacje skacza, a klik potrafi przepasc.
     const zid = this._zewnId();   // v1.8: zmiana BT1 z pompy tez przerysowuje
-    const ids = this._idx().concat(zid ? [zid] : [], autos, [WIET_BOOL], (this._tab === 'strefy' || this._tab === 'harmonogram') && this._draft ? this._draft.phones : []);
+    const ids = this._idx().concat(zid ? [zid] : [], autos, [WIET_BOOL, WYJ_BOOL], (this._tab === 'strefy' || this._tab === 'harmonogram') && this._draft ? this._draft.phones.concat(this._draft.trg.le, this._draft.trg.we) : []);
     const changed = first || !this._seen || ids.length !== this._seen.size || ids.some((id) => this._seen.get(id) !== hass.states[id]);
     if (!changed) return;
     this._seen = new Map(ids.map((id) => [id, hass.states[id]]));
@@ -963,6 +966,8 @@ class CompitNanoOneCard extends HTMLElement {
       cyc: { day: { on: false, every: 3, dur: 20, pn: 80, pw: 80 }, night: { on: false, every: 2, dur: 15, pn: 60, pw: 60 } },
       rules: [],
       z: [z(true, 300), z(false, 2000)],
+      wyj: { on: false, min: 10, pn: 80, pw: 80 },
+      trg: { le: [], we: [], wv: 0, l: { on: false, pn: 70, pw: 70, hold: 5 }, w: { on: false, pn: 80, pw: 80, hold: 5 }, lw: { on: false, pn: 95, pw: 95, hold: 10 } },
     };
   }
 
@@ -980,6 +985,10 @@ class CompitNanoOneCard extends HTMLElement {
     out.rules = (c.rules || []).map((r) => Object.assign({ name: 'Reguła', on: true, conds: [], dpn: 80, dpw: 80, npn: 60, npw: 60, hold: 10 }, r,
       { conds: (r.conds || []).map((x) => Object.assign({ e: '', op: 'on', v: '' }, x)) }));
     out.z = [0, 1].map((i) => Object.assign({}, d.z[i], (c.z || [])[i] || {}));
+    out.wyj = Object.assign({}, d.wyj, c.wyj || {});
+    const ct = c.trg || {};
+    out.trg = { le: Array.isArray(ct.le) ? ct.le.slice() : [], we: Array.isArray(ct.we) ? ct.we.slice() : [], wv: ct.wv !== undefined ? ct.wv : d.trg.wv };
+    TRG.forEach(([k]) => { out.trg[k] = Object.assign({}, d.trg[k], ct[k] || {}); });
     // migracja z v1.9-v2.2: wietrzenie i "tryb normalny" byly w strefie 1
     if (!c.v || c.v < 2) {
       const z0 = (c.z || [])[0] || {};
@@ -1071,6 +1080,42 @@ class CompitNanoOneCard extends HTMLElement {
     return !!(cy.on && e > 0 && d > 0 && ((((mins - anchor) % 1440) + 1440) % 1440) % e < d);
   }
 
+  // v2.5: czujniki strefy 1 (swiatlo / woda / oba), najsilniejszy wygrywa
+  _trgEnts(list) { return (list || []).filter((e) => /^[a-z_]+\.[a-z0-9_]+$/.test(e)); }
+  _trgOrder() {
+    const t = this._draft.trg;
+    return TRG.map(([k]) => k).filter((k) => {
+      if (!t[k].on) return false;
+      if (k !== 'w' && !this._trgEnts(t.le).length) return false;
+      if (k !== 'l' && !this._trgEnts(t.we).length) return false;
+      return true;
+    }).sort((a, b) => ((this._n(t[b].pn) || 0) + (this._n(t[b].pw) || 0)) - ((this._n(t[a].pn) || 0) + (this._n(t[a].pw) || 0)));
+  }
+  _actNow(e, th, hold) {
+    const s = this._hass.states[e];
+    if (!s) return false;
+    const v = this._n(s.state);
+    return s.state === 'on' || (v !== null && v > th) || (Date.now() - new Date(s.last_changed)) / 60000 < (this._n(hold) || 0);
+  }
+  _trgNow(k) {
+    const t = this._draft.trg, h = t[k].hold, wv = this._n(t.wv) || 0;
+    const L = this._trgEnts(t.le).some((e) => this._actNow(e, 0, h)), Wt = this._trgEnts(t.we).some((e) => this._actNow(e, wv, h));
+    return k === 'l' ? L : k === 'w' ? Wt : L && Wt;
+  }
+  _actTpl(list, th, hold) {
+    const h = (this._n(hold) || 0) * 60;
+    return '(' + list.map((e) => `(is_state('${e}', 'on') or (states('${e}') | float(0)) > ${th}${h > 0 ? ` or (as_timestamp(now()) - as_timestamp(states.${e}.last_changed, 0)) < ${h}` : ''})`).join(' or ') + ')';
+  }
+  _trgTpl(W) {
+    const t = this._draft.trg, wv = this._n(t.wv) || 0, le = this._trgEnts(t.le), we = this._trgEnts(t.we);
+    return this._trgOrder().map((k) => {
+      const g = t[k];
+      const cond = k === 'l' ? this._actTpl(le, 0, g.hold) : k === 'w' ? this._actTpl(we, wv, g.hold) : this._actTpl(le, 0, g.hold) + ' and ' + this._actTpl(we, wv, g.hold);
+      const tg = this._boostTgt(W, 'czujnik: ' + TRG.find((x) => x[0] === k)[1].toLowerCase(), g.pn, g.pw);
+      return `{% if out.t is none and ${cond} %}{% set out.t = ${this._jl(tg)} %}{% endif %}`;
+    }).join('');
+  }
+
   _ruleConds(r) { return r.conds.filter((x) => x.e && /^[a-z_]+\.[a-z0-9_]+$/.test(x.e)); }
 
   // ---- lustro logiki sterownika w karcie (do "teraz steruje" i podgladu) ----
@@ -1090,11 +1135,16 @@ class CompitNanoOneCard extends HTMLElement {
     const home = !c.z[0].on || !c.phones.length || cnt[0] > 0;
     const d = new Date(), mins = d.getHours() * 60 + d.getMinutes(), night = this._isNight(mins);
     if (!home) {
+      const yb = this._hass.states[WYJ_BOOL];
+      if (yb && yb.state === 'on' && c.wyj.on) return this._boostTgt(W, 'wietrzenie po wyjeździe', c.wyj.pn, c.wyj.pw);
       if (c.z[1].on && cnt[1] > 0 && c.z[1].ltryb) return this._tgt(W, 'strefa 2', c.z[1].ltryb, c.z[1].lpn, c.z[1].lpw);
       return c.z[0].ltryb ? this._tgt(W, 'wyjazd', c.z[0].ltryb, c.z[0].lpn, c.z[0].lpw) : { src: 'wyjazd (bez zmiany trybu)' };
     }
     const wb = this._hass.states[WIET_BOOL];
     if (wb && wb.state === 'on') return this._wietTgt(W);
+    for (const k of this._trgOrder()) {
+      if (this._trgNow(k)) { const g = c.trg[k]; return this._boostTgt(W, 'czujnik: ' + TRG.find((x) => x[0] === k)[1].toLowerCase(), g.pn, g.pw); }
+    }
     for (const r of c.rules) {
       const cs = this._ruleConds(r);
       if (r.on && cs.length && cs.every((x) => this._condNow(x, r.hold))) return this._boostTgt(W, 'reguła ' + r.name, night ? r.npn : r.dpn, night ? r.npw : r.dpw);
@@ -1156,9 +1206,9 @@ class CompitNanoOneCard extends HTMLElement {
       + `{% set mins = now().hour * 60 + now().minute %}`
       + `{% set night = ${nf > nt ? `(mins >= ${nf} or mins < ${nt})` : `(mins >= ${nf} and mins < ${nt})`} %}`
       + `{% set out = namespace(t=none) %}`
-      + `{% if not home %}{% if ns.c1 > 0 and ${this._jl(!!z2)} %}{% set out.t = ${this._jl(z2)} %}{% else %}{% set out.t = ${this._jl(away)} %}{% endif %}`
+      + `{% if not home %}{% if ${this._jl(!!c.wyj.on)} and is_state('${WYJ_BOOL}', 'on') %}{% set out.t = ${this._jl(this._boostTgt(W, 'wietrzenie po wyjeździe', c.wyj.pn, c.wyj.pw))} %}{% elif ns.c1 > 0 and ${this._jl(!!z2)} %}{% set out.t = ${this._jl(z2)} %}{% else %}{% set out.t = ${this._jl(away)} %}{% endif %}`
       + `{% elif is_state('${WIET_BOOL}', 'on') %}{% set out.t = ${this._jl(this._wietTgt(W))} %}`
-      + `{% else %}`;
+      + `{% else %}` + this._trgTpl(W);
     c.rules.forEach((r) => {
       const cs = this._ruleConds(r);
       if (!r.on || !cs.length) return;
@@ -1194,6 +1244,13 @@ class CompitNanoOneCard extends HTMLElement {
       { platform: 'state', entity_id: WIET_BOOL, to: 'on', for: { minutes: Math.max(1, Number(c.wiet.min) || 15) }, id: 'wiet_off' },
     ];
     if (ruleEnts.length) trig.push({ platform: 'state', entity_id: ruleEnts });
+    const trgEnts = [...new Set(this._trgEnts(c.trg.le).concat(this._trgEnts(c.trg.we)))];
+    if (this._trgOrder().length && trgEnts.length) trig.push({ platform: 'state', entity_id: trgEnts });
+    const wyjOn = !!(c.wyj.on && (Number(c.wyj.min) || 0) > 0);
+    if (wyjOn) {
+      trig.push({ platform: 'state', entity_id: WYJ_BOOL });
+      trig.push({ platform: 'state', entity_id: WYJ_BOOL, to: 'on', for: { minutes: Math.max(1, Number(c.wyj.min) || 10) }, id: 'wyj_off' });
+    }
     if (c.phones.length && c.z[0].on) {
       trig.push({ platform: 'template', id: 'wjazd1', value_template: this._countTpl(0) + '{{ ns.n > 0 }}' });
       trig.push({ platform: 'template', id: 'wyjazd', value_template: this._countTpl(0) + '{{ ns.n == 0 }}', for: { minutes: 1 } });
@@ -1201,13 +1258,19 @@ class CompitNanoOneCard extends HTMLElement {
     if (c.phones.length && c.z[1].on) trig.push({ platform: 'template', id: 'wjazd2', value_template: this._countTpl(1) + '{{ ns.n > 0 }}' });
     const bon = { service: 'input_boolean.turn_on', target: { entity_id: WIET_BOOL } };
     const boff = { service: 'input_boolean.turn_off', target: { entity_id: WIET_BOOL } };
+    const yon = { service: 'input_boolean.turn_on', target: { entity_id: WYJ_BOOL } };
+    const yoff = { service: 'input_boolean.turn_off', target: { entity_id: WYJ_BOOL } };
     const ch = [{ conditions: [{ condition: 'trigger', id: 'wiet_off' }], sequence: [boff] },
-      { conditions: [{ condition: 'trigger', id: 'wyjazd' }], sequence: [boff] }];
+      { conditions: [{ condition: 'trigger', id: 'wyjazd' }], sequence: wyjOn ? [boff, yon] : [boff] }];
+    if (wyjOn) {
+      ch.push({ conditions: [{ condition: 'trigger', id: 'wyj_off' }], sequence: [yoff] });
+      ch.push({ conditions: [{ condition: 'trigger', id: 'wjazd1' }, { condition: 'state', entity_id: WYJ_BOOL, state: 'on' }], sequence: [yoff] });
+    }
     if (c.z[0].wiet && (Number(c.wiet.min) || 0) > 0) ch.push({ conditions: [{ condition: 'trigger', id: 'wjazd1' }], sequence: [bon] });
     if (c.z[1].wiet && (Number(c.wiet.min) || 0) > 0) ch.push({ conditions: [{ condition: 'trigger', id: 'wjazd2' }], sequence: [bon] });
     const ifDo = (cond, seq) => ({ if: [{ condition: 'template', value_template: cond }], then: seq });
     const action = [
-      { choose: ch },
+      ...ch.map((x) => ({ if: x.conditions, then: x.sequence })),
       { variables: { t: this._ctlTpl(W) } },
       { condition: 'template', value_template: '{{ t is mapping }}' },
       { variables: {
@@ -1229,7 +1292,7 @@ class CompitNanoOneCard extends HTMLElement {
     }
     return {
       id: AUTO_IDS[0], alias: 'Rekuperacja – sterownik',
-      description: 'Utworzone przez kartę compit-nano-one-card (Harmonogram + Strefy). Co minutę ustala tryb i %: wyjazd > wietrzenie > reguły > cykle > harmonogram. Zmieniaj w karcie, nie tutaj.',
+      description: 'Utworzone przez kartę compit-nano-one-card (Harmonogram + Strefy). Co minutę ustala tryb i %: wyjazd (wietrzenie po wyjeździe, potem nikogo) > wietrzenie wjazdu > czujniki (najsilniejszy) > reguły > cykle > harmonogram. Zmieniaj w karcie, nie tutaj.',
       mode: 'queued', max: 10, max_exceeded: 'silent',
       variables: { compit_cfg: c },
       trigger: trig, condition: [], action,
@@ -1239,6 +1302,16 @@ class CompitNanoOneCard extends HTMLElement {
   async _delAuto(id) {
     try { await this._hass.callApi('DELETE', 'config/automation/config/' + id); } catch (e) { /* nie bylo */ }
     if (this._autoExists) this._autoExists[id] = false;
+  }
+
+  async _ensureWyjBool() {
+    if (this._hass.states[WYJ_BOOL]) return;
+    let list = [];
+    try { list = await this._hass.callWS({ type: 'input_boolean/list' }) || []; } catch (e) { list = []; }
+    if (!list.some((x) => x.id === WYJ_BOOL.split('.')[1] || x.name === 'Rekuperacja wietrzenie wyjazd')) {
+      await this._hass.callWS({ type: 'input_boolean/create', name: 'Rekuperacja wietrzenie wyjazd', icon: 'mdi:car-arrow-right' });
+      this._pushLog({ t: new Date(), e: 'karta', s: 'Dodano przełącznik ' + WYJ_BOOL });
+    }
   }
 
   async _ensureWietBool() {
@@ -1273,6 +1346,7 @@ class CompitNanoOneCard extends HTMLElement {
       }
       await this._ensureWietBool();
       done.push('przełącznik wietrzenia');
+      if (cfg.wyj.on) { await this._ensureWyjBool(); done.push('przełącznik wietrzenia po wyjeździe'); }
       const a = this._genCtl();
       await this._hass.callApi('POST', 'config/automation/config/' + a.id, a);
       this._autoExists[a.id] = true;
@@ -1298,8 +1372,10 @@ class CompitNanoOneCard extends HTMLElement {
     } catch (e) { /* brak */ }
     try {
       const bl = await this._hass.callWS({ type: 'input_boolean/list' }) || [];
-      const b = bl.find((x) => x.id === WIET_BOOL.split('.')[1]);
-      if (b) await this._hass.callWS({ type: 'input_boolean/delete', input_boolean_id: b.id });
+      for (const eid of [WIET_BOOL, WYJ_BOOL]) {
+        const b = bl.find((x) => x.id === eid.split('.')[1]);
+        if (b) await this._hass.callWS({ type: 'input_boolean/delete', input_boolean_id: b.id });
+      }
     } catch (e) { /* brak */ }
     this._pushLog({ t: new Date(), e: 'karta', s: 'Usunięto sterownik, strefy i przełącznik wietrzenia' });
     this._flashMsg(true, '✓ Usunięte z HA: sterownik, strefy, przełącznik wietrzenia (ustawienia zostały w karcie)');
@@ -1609,11 +1685,11 @@ class CompitNanoOneCard extends HTMLElement {
           <label>Szer. <input class="md" inputmode="decimal" data-bind="${p}lat" data-map value="${esc(z.lat)}"></label>
           <label>Dł. <input class="md" inputmode="decimal" data-bind="${p}lon" data-map value="${esc(z.lon)}"></label>
           <button class="mini" data-zhome="${i}">środek = dom</button></div>
-        <div class="srow"><label class="tgl"><input type="checkbox" data-bind="${p}wiet" ${z.wiet ? 'checked' : ''}> Wjazd (pierwszy telefon) włącza wietrzenie na ${esc(c.wiet.min)} min</label></div>
-        <div class="sublbl">${i ? 'Gdy ktoś tu jest, a nikogo w strefie 1' : 'Wyjazd (ostatni telefon wyszedł)'}</div>
-        <div class="srow"><label>Tryb ${this._trybSel(p + 'ltryb', z.ltryb, W, i ? '— jak wyjazd —' : '— bez zmiany —')}</label>
-          ${gl ? this._pctIn(p + 'lpn', z.lpn, 'Nawiew') + this._pctIn(p + 'lpw', z.lpw, 'Wywiew') : ''}</div>
-        ${i ? '' : '<div class="small mute">Gdy ktoś jest w strefie 1, działa harmonogram z zakładki Harmonogram (z regułami i cyklami).</div>'}` : ''}
+        ${i ? `<div class="srow"><label class="tgl"><input type="checkbox" data-bind="${p}wiet" ${z.wiet ? 'checked' : ''}> Wjazd (pierwszy telefon) włącza wietrzenie na ${esc(c.wiet.min)} min</label></div>
+        <div class="sublbl">Gdy ktoś tu jest, a nikogo w strefie 1</div>
+        <div class="srow"><label>Tryb ${this._trybSel(p + 'ltryb', z.ltryb, W, '— jak wyjazd —')}</label>
+          ${gl ? this._pctIn(p + 'lpn', z.lpn, 'Nawiew') + this._pctIn(p + 'lpw', z.lpw, 'Wywiew') : ''}</div>`
+        : '<div class="small mute">Wjazd, wyjazd, „nikogo nie ma”, czujniki i harmonogram strefy 1 ustawiasz niżej w <b>Harmonogramie strefy 1</b>.</div>'}` : ''}
       </div>`;
     };
     return `<div class="plan" data-form>
@@ -1632,9 +1708,65 @@ class CompitNanoOneCard extends HTMLElement {
       <div id="mapslot"><slot name="map"></slot></div>
       <div class="small mute">Przeciągnij kropkę w środku, żeby przesunąć strefę, a uchwyt na krawędzi, żeby zmienić promień.</div>
       </div></div>
+      ${this._renderZ1()}
       ${this._saveBar()}
       <div class="row">${this._confirmDel ? '<span class="small warn">Na pewno usunąć z HA sterownik, strefy i przełącznik wietrzenia?</span><button class="mini" data-delall="yes">Tak, usuń</button><button class="mini" data-delall="no">Nie</button>'
         : '<button class="mini" data-delall="ask">Usuń wszystko z HA</button>'}</div>
+    </div>`;
+  }
+
+  // ---------------- v2.5: Harmonogram strefy 1 ----------------
+  _renderZ1() {
+    const c = this._draft, W = this._wt(), z = c.z[0], t = c.trg;
+    const gl = this._gearOf(z.ltryb);
+    const wb = this._hass.states[WIET_BOOL], yb = this._hass.states[WYJ_BOOL];
+    const name = (id) => { const s = this._hass.states[id]; return s && s.attributes.friendly_name || id; };
+    const now = (id) => { const s = this._hass.states[id]; return s ? esc(s.state) + (s.attributes.unit_of_measurement ? ' ' + esc(s.attributes.unit_of_measurement) : '') : '<span class="warn">brak encji</span>'; };
+    const chips = (k) => (t[k] || []).map((e, i) => `<span class="echip" data-e="${esc(e)}">${esc(name(e))} <span class="small mute">(${now(e)})</span> <button class="mini" data-deltrg="${k}:${i}">✕</button></span>`).join('')
+      || '<span class="small mute">brak – dodaj encję</span>';
+    const add = (k, ph, list) => `<div class="srow"><input class="lg" list="${list}" placeholder="${ph}" data-trgin="${k}"><button class="mini" data-addtrg="${k}">+ dodaj</button></div>`;
+    const ents = Object.keys(this._hass.states);
+    const lEnts = ents.filter((id) => /^(light|switch|input_boolean|binary_sensor)\./.test(id)).sort();
+    const wEnts = ents.filter((id) => /^(sensor|binary_sensor|switch|input_boolean)\./.test(id)).sort();
+    const trg = (k, l) => { const g = t[k]; return `<div class="srow"><label class="tgl"><input type="checkbox" data-bind="trg.${k}.on" data-rr ${g.on ? 'checked' : ''}> <b>${l}</b></label>
+      ${this._pctIn(`trg.${k}.pn`, g.pn, 'Nawiew')}${this._pctIn(`trg.${k}.pw`, g.pw, 'Wywiew')}${this._numIn(`trg.${k}.hold`, g.hold, 'po wyłączeniu jeszcze', 'min')}
+      ${g.on && this._draft && this._trgNow(k) ? '<span class="zb z1">teraz aktywny</span>' : ''}</div>`; };
+    const cyc = (k, l) => { const cy = c.cyc[k]; return `<div class="srow"><label class="tgl"><input type="checkbox" data-bind="cyc.${k}.on" data-rr ${cy.on ? 'checked' : ''}> <b>${l}</b></label>
+      ${this._numIn(`cyc.${k}.every`, cy.every, 'co', 'h')}${this._numIn(`cyc.${k}.dur`, cy.dur, 'na', 'min')}${this._pctIn(`cyc.${k}.pn`, cy.pn, 'Nawiew')}${this._pctIn(`cyc.${k}.pw`, cy.pw, 'Wywiew')}</div>`; };
+    return `<div class="z1h">
+      <h3>${ico('clock')} Harmonogram strefy 1</h3>
+      <div class="small mute">Kolejność: wyjazd → wietrzenie po wyjeździe → „nikogo nie ma”. Wjazd → wietrzenie wjazdu → czujniki (najsilniejszy wygrywa) → cykle → harmonogram tygodniowy.</div>
+      <div class="pgrid"><div>
+        <div class="sublbl">1. Wjazd do strefy (pierwszy telefon)</div>
+        <div class="srow"><label class="tgl"><input type="checkbox" data-bind="z.0.wiet" data-rr ${z.wiet ? 'checked' : ''}> Wietrzenie</label>
+          ${this._numIn('wiet.min', c.wiet.min, 'na', 'min')}${this._pctIn('wiet.pn', c.wiet.pn, 'Nawiew')}${this._pctIn('wiet.pw', c.wiet.pw, 'Wywiew')}
+          ${wb ? `<span class="small ${wb.state === 'on' ? 'aon' : 'mute'}">${wb.state === 'on' ? 'teraz WŁ.' : 'wył.'}</span>` : ''}</div>
+        <div class="sublbl">2. Wyjazd ze strefy (ostatni telefon wyszedł)</div>
+        <div class="srow"><label class="tgl"><input type="checkbox" data-bind="wyj.on" data-rr ${c.wyj.on ? 'checked' : ''}> Wietrzenie po wyjeździe</label>
+          ${this._numIn('wyj.min', c.wyj.min, 'na', 'min')}${this._pctIn('wyj.pn', c.wyj.pn, 'Nawiew')}${this._pctIn('wyj.pw', c.wyj.pw, 'Wywiew')}
+          ${yb ? `<span class="small ${yb.state === 'on' ? 'aon' : 'mute'}">${yb.state === 'on' ? 'teraz WŁ.' : 'wył.'}</span>` : ''}</div>
+        <div class="sublbl">3. Nikogo nie ma w strefie (po wietrzeniu)</div>
+        <div class="srow"><label>Tryb ${this._trybSel('z.0.ltryb', z.ltryb, W, '— bez zmiany —')}</label>
+          ${gl ? this._pctIn('z.0.lpn', z.lpn, 'Nawiew') + this._pctIn('z.0.lpw', z.lpw, 'Wywiew') : '<span class="small mute">% wpiszesz po wyborze trybu z biegiem</span>'}</div>
+        <div class="sublbl">4. Wietrzenie co jakiś czas (gdy ktoś jest)</div>
+        ${cyc('day', 'Dzień')}${cyc('night', 'Noc')}
+        <div class="srow"><label>Noc od <input type="time" step="900" data-bind="night.from" data-rr value="${esc(c.night.from)}"></label><label>do <input type="time" step="900" data-bind="night.to" data-rr value="${esc(c.night.to)}"></label></div>
+      </div><div>
+        <div class="sublbl">5. Czujniki (gdy ktoś jest)</div>
+        <div class="small"><b>Światła</b></div><div class="echips">${chips('le')}</div>${add('le', 'np. light.lazienka', 'z1l')}
+        <div class="small"><b>Woda</b> <span class="mute">(przepływ / zawór / czujnik; aktywna gdy „on” albo wartość &gt;</span> <input class="sm" inputmode="decimal" data-bind="trg.wv" value="${esc(t.wv)}"><span class="mute">)</span></div>
+        <div class="echips">${chips('we')}</div>${add('we', 'np. sensor.przeplyw_wody', 'z1w')}
+        ${TRG.map(([k, l]) => trg(k, l)).join('')}
+        <div class="small mute">Każdy ustawiasz osobno. Jak pasuje kilka naraz, wygrywa ten z większym nawiewem + wywiewem. Biegi bez opcji w ESP jadą na biegu ${esc(c.boost)} z tymi %.</div>
+      </div></div>
+      <div class="sublbl">6. Harmonogram tygodniowy (gdy ktoś jest, po wjeździe)</div>
+      <div class="zh"><label class="tgl"><input type="checkbox" data-bind="sched.on" data-rr ${c.sched.on ? 'checked' : ''}> <b>Włączony</b></label>
+        <span class="small mute">to samo co w zakładce Harmonogram (tam też reguły i domyślne % biegów)</span></div>
+      ${this._renderChart()}
+      <div class="row"><button class="opt" data-addslot>+ Dodaj wpis</button></div>
+      ${this._slotEdit !== undefined && this._slotEdit !== null ? this._slotEditor(this._slotEdit) : ''}
+      <datalist id="z1l">${lEnts.map((id) => `<option value="${esc(id)}">`).join('')}</datalist>
+      <datalist id="z1w">${wEnts.map((id) => `<option value="${esc(id)}">`).join('')}</datalist>
     </div>`;
   }
 
@@ -1899,7 +2031,19 @@ class CompitNanoOneCard extends HTMLElement {
       const v = b.dataset.delall;
       if (v === 'ask') { this._confirmDel = true; this._render(); } else if (v === 'no') { this._confirmDel = false; this._render(); } else this._deleteAll();
     }));
-    if (this._tab === 'harmonogram' && this._draft) this._wireChart();
+    R.querySelectorAll('[data-addtrg]').forEach((b) => b.addEventListener('click', () => {
+      const k = b.dataset.addtrg, inp = R.querySelector(`[data-trgin="${k}"]`), v = inp ? inp.value.trim() : '';
+      if (!/^[a-z_]+\.[a-z0-9_]+$/.test(v)) { this._flashMsg(false, 'Wpisz ID encji, np. light.lazienka'); this._render(); return; }
+      if (!this._draft.trg[k].includes(v)) this._draft.trg[k].push(v);
+      this._render();
+    }));
+    R.querySelectorAll('[data-deltrg]').forEach((b) => b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const [k, i] = b.dataset.deltrg.split(':');
+      this._draft.trg[k].splice(Number(i), 1);
+      this._render();
+    }));
+    if ((this._tab === 'harmonogram' || this._tab === 'strefy') && this._draft) this._wireChart();
     if (this._tab === 'strefy' && this._draft) this._mountMap();
   }
 
@@ -2427,6 +2571,9 @@ const CSS = `
   .zh { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
   .days { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px; align-items:center; }
   .chip { font:inherit; font-size:.82em; min-width:34px; padding:4px 6px; border-radius:14px; border:1px solid var(--divider-color); background:transparent; color:var(--secondary-text-color); cursor:pointer; }
+  .z1h { border:1px solid var(--divider-color); border-radius:12px; padding:10px 12px; margin:12px 0; border-left:4px solid #27b4ff; }
+  .echips { display:flex; flex-wrap:wrap; gap:6px; margin:4px 0; }
+  .echip { display:inline-flex; align-items:center; gap:4px; padding:2px 4px 2px 10px; border-radius:14px; border:1px solid var(--divider-color); font-size:.85em; cursor:pointer; }
   .chip.on { border-color:var(--primary-color); color:var(--primary-color); background:rgba(39,180,255,.14); font-weight:700; }
   .srow { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; margin:6px 0; font-size:.9em; }
   .srow label, .pin { display:inline-flex; align-items:center; gap:6px; color:var(--secondary-text-color); }
