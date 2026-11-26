@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v2.7
+ * compit-nano-one-card  v2.8
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -21,7 +21,7 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v2.7';
+const VERSION = 'v2.8';
 // v2.4: Leaflet z unpkg jako zapas, gdy mapa HA (ha-map) nie wstanie
 // v2.6: kilka CDN po kolei, podklad OpenStreetMap bez klucza API
 const LEAFLET_CDN = ['https://unpkg.com/leaflet@1.9.4/dist/', 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/'];
@@ -34,6 +34,9 @@ const OLD_IDS = ['compit_rekuperacja_harmonogram', 'compit_rekuperacja_strefa_1'
 const WIET_BOOL = 'input_boolean.rekuperacja_wietrzenie';
 // v2.5: wietrzenie po wyjezdzie ze strefy 1 (osobny przelacznik, sam gasnie po X min)
 const WYJ_BOOL = 'input_boolean.rekuperacja_wietrzenie_wyjazd';
+// v2.8: sezon lato/zima (ON = lato), przelaczany przez sterownik wg temp. zewnetrznej
+const LATO_BOOL = 'input_boolean.rekuperacja_lato';
+const TZK = ['t_reczna', 't_dzien', 't_noc', 't_poza'];
 const TRG = [['l', 'Tylko światło'], ['w', 'Tylko woda'], ['lw', 'Światło i woda naraz']];
 const LS_CFG = 'compit-nano-one-plan';
 const SB_URL = 'rekuperacja-nano';
@@ -441,7 +444,7 @@ class CompitNanoOneCard extends HTMLElement {
     // v1.4: HA podaje nowe hass przy KAZDEJ zmianie dowolnej encji w domu. Przerysowuj tylko,
     // gdy zmienila sie ktoras encja z prefiksem - inaczej animacje skacza, a klik potrafi przepasc.
     const zid = this._zewnId();   // v1.8: zmiana BT1 z pompy tez przerysowuje
-    const ids = this._idx().concat(zid ? [zid] : [], autos, [WIET_BOOL, WYJ_BOOL], (this._tab === 'strefy' || this._tab === 'harmonogram') && this._draft ? this._draft.phones.concat(this._draft.trg.le, this._draft.trg.we) : []);
+    const ids = this._idx().concat(zid ? [zid] : [], autos, [WIET_BOOL, WYJ_BOOL, LATO_BOOL], (this._tab === 'strefy' || this._tab === 'harmonogram') && this._draft ? this._draft.phones.concat(this._draft.trg.le, this._draft.trg.we) : []);
     const changed = first || !this._seen || ids.length !== this._seen.size || ids.some((id) => this._seen.get(id) !== hass.states[id]);
     if (!changed) return;
     this._seen = new Map(ids.map((id) => [id, hass.states[id]]));
@@ -972,6 +975,8 @@ class CompitNanoOneCard extends HTMLElement {
       rules: [],
       z: [z(true, 300), z(false, 2000)],
       wyj: { on: false, min: 10, pn: 80, pw: 80 },
+      sez: { on: false, src: '', zima: 12, lato: 16, hold: 6, esp: false, ez: '', el: '' },
+      tz: { zima: { t_reczna: '', t_dzien: '', t_noc: '', t_poza: '' }, lato: { t_reczna: '', t_dzien: '', t_noc: '', t_poza: '' } },
       trg: { le: [], we: [], wv: 0, l: { on: false, pn: 70, pw: 70, hold: 5 }, w: { on: false, pn: 80, pw: 80, hold: 5 }, lw: { on: false, pn: 95, pw: 95, hold: 10 } },
     };
   }
@@ -991,6 +996,11 @@ class CompitNanoOneCard extends HTMLElement {
       { conds: (r.conds || []).map((x) => Object.assign({ e: '', op: 'on', v: '' }, x)) }));
     out.z = [0, 1].map((i) => Object.assign({}, d.z[i], (c.z || [])[i] || {}));
     out.wyj = Object.assign({}, d.wyj, c.wyj || {});
+    out.sez = Object.assign({}, d.sez, c.sez || {});
+    out.tz = { zima: Object.assign({}, d.tz.zima, (c.tz || {}).zima || {}), lato: Object.assign({}, d.tz.lato, (c.tz || {}).lato || {}) };
+    // v2.8: harmonogram "lato" startuje jako kopia obecnego (zima)
+    const cs = c.sched || {};
+    out.sched.lato = (Array.isArray(cs.lato) ? cs.lato : out.sched.slots).map((x) => Object.assign({ d: [], t: '06:00', tryb: '', temp: '', pn: '', pw: '' }, x, { d: (x.d || []).slice() }));
     const ct = c.trg || {};
     out.trg = { le: Array.isArray(ct.le) ? ct.le.slice() : [], we: Array.isArray(ct.we) ? ct.we.slice() : [], wv: ct.wv !== undefined ? ct.wv : d.trg.wv };
     TRG.forEach(([k]) => { out.trg[k] = Object.assign({}, d.trg[k], ct[k] || {}); });
@@ -1000,6 +1010,7 @@ class CompitNanoOneCard extends HTMLElement {
       if (z0.wm !== undefined) out.wiet = { min: Number(z0.wm) || 0, pn: z0.wpn !== undefined ? z0.wpn : 80, pw: z0.wpw !== undefined ? z0.wpw : 80 };
       out.z.forEach((z, i) => { const o = (c.z || [])[i] || {}; z.wiet = o.wm === undefined ? true : Number(o.wm) > 0; });
       if (!out.sched.slots.length && z0.ntryb) out.sched.slots = [{ d: DAYS.map((x) => x[0]), t: '00:00', tryb: z0.ntryb, temp: '', pn: z0.npn || '', pw: z0.npw || '' }];
+      if (!Array.isArray(cs.lato)) out.sched.lato = out.sched.slots.map((x) => Object.assign({}, x, { d: x.d.slice() }));
       out.v = 2;
     }
     out.z.forEach((z) => { delete z.wm; delete z.wpn; delete z.wpw; delete z.ntryb; delete z.npn; delete z.npw; });
@@ -1062,14 +1073,30 @@ class CompitNanoOneCard extends HTMLElement {
     return this._boostTgt(W, 'wietrzenie', c.wiet.pn, c.wiet.pw);
   }
 
+  // v2.8: sezon
+  _sezSrc() {
+    const c = this._draft, z = this._zewnId();
+    if (c.sez.src) return c.sez.src;
+    if (z && this._hass.states[z]) return z;
+    return this._st('t_czerpnia') ? this._id('t_czerpnia') : '';
+  }
+  _isLato() { const b = this._hass.states[LATO_BOOL]; return !!(this._draft.sez.on && b && b.state === 'on'); }
+  _sedit() { return this._draft.sez.on && this._sEd === 'lato' ? 'lato' : 'zima'; }
+  _sp() { return this._sedit() === 'lato' ? 'sched.lato' : 'sched.slots'; }
+  _sl() { return this._sedit() === 'lato' ? this._draft.sched.lato : this._draft.sched.slots; }
+
   // wpisy harmonogramu jako [minuta tygodnia (Pn 00:00 = 0), cel], posortowane
-  _schedEntries(W) {
+  _schedEntries(W, sez) {
     const c = this._draft, out = [];
-    c.sched.slots.forEach((s) => {
-      if (!s.tryb && this._n(s.temp) === null) return;
+    sez = sez || 'zima';
+    const defT = this._n(c.tz[sez].t_reczna);
+    const src = c.sez.on ? 'harmonogram ' + sez : 'harmonogram';
+    (sez === 'lato' ? c.sched.lato : c.sched.slots).forEach((s) => {
+      const temp = this._n(s.temp) !== null ? s.temp : defT;
+      if (!s.tryb && this._n(temp) === null) return;
       s.d.forEach((d) => {
         const di = DAYS.findIndex((x) => x[0] === d);
-        if (di >= 0) out.push([di * 1440 + this._min(s.t), this._tgt(W, 'harmonogram', s.tryb, s.pn, s.pw, s.temp)]);
+        if (di >= 0) out.push([di * 1440 + this._min(s.t), this._tgt(W, src, s.tryb, s.pn, s.pw, temp)]);
       });
     });
     return out.sort((a, b) => a[0] - b[0]);
@@ -1158,7 +1185,7 @@ class CompitNanoOneCard extends HTMLElement {
     if (night && this._cycOn(c.cyc.night, mins, nf)) return this._boostTgt(W, 'cykl nocny', c.cyc.night.pn, c.cyc.night.pw);
     if (!night && this._cycOn(c.cyc.day, mins, nt)) return this._boostTgt(W, 'cykl dzienny', c.cyc.day.pn, c.cyc.day.pw);
     if (c.sched.on) {
-      const E = this._schedEntries(W);
+      const E = this._schedEntries(W, this._isLato() ? 'lato' : 'zima');
       if (E.length) {
         const wm = ((d.getDay() + 6) % 7) * 1440 + mins;
         let s = E[E.length - 1];
@@ -1226,9 +1253,11 @@ class CompitNanoOneCard extends HTMLElement {
       return `{% if out.t is none and ${cond} and ((mins - ${anchor}) % 1440) % ${e} < ${d} %}{% set out.t = ${this._jl(this._boostTgt(W, src, cy.pn, cy.pw))} %}{% endif %}`;
     };
     t += cyc(c.cyc.night, nf, 'night', 'cykl nocny') + cyc(c.cyc.day, nt, 'not night', 'cykl dzienny');
-    const E = c.sched.on ? this._schedEntries(W) : [];
-    if (E.length) {
-      t += `{% if out.t is none %}{% set E = ${this._jl(E)} %}{% set wm = now().weekday() * 1440 + mins %}{% set sn = namespace(s=E[-1]) %}`
+    const EZ = c.sched.on ? this._schedEntries(W, 'zima') : [];
+    const EL = c.sched.on && c.sez.on ? this._schedEntries(W, 'lato') : [];
+    if (EZ.length || EL.length) {
+      const E = EZ.length ? EZ : EL;
+      t += `{% if out.t is none %}{% set E = ${c.sez.on ? `(${this._jl(EL.length ? EL : EZ)} if is_state('${LATO_BOOL}', 'on') else ${this._jl(EZ.length ? EZ : EL)})` : this._jl(E)} %}{% set wm = now().weekday() * 1440 + mins %}{% set sn = namespace(s=E[-1]) %}`
         + `{% for e in E %}{% if e[0] <= wm %}{% set sn.s = e %}{% endif %}{% endfor %}{% set out.t = sn.s[1] %}{% endif %}`;
     }
     return t + `{% endif %}{{ out.t }}`;
@@ -1251,6 +1280,14 @@ class CompitNanoOneCard extends HTMLElement {
     if (ruleEnts.length) trig.push({ platform: 'state', entity_id: ruleEnts });
     const trgEnts = [...new Set(this._trgEnts(c.trg.le).concat(this._trgEnts(c.trg.we)))];
     if (this._trgOrder().length && trgEnts.length) trig.push({ platform: 'state', entity_id: trgEnts });
+    const sezSrc = this._sezSrc();
+    const sezOn = !!(c.sez.on && sezSrc);
+    if (sezOn) {
+      const hold = { hours: Math.max(0, Number(String(c.sez.hold).replace(',', '.')) || 0) };
+      trig.push({ platform: 'numeric_state', entity_id: sezSrc, below: Number(String(c.sez.zima).replace(',', '.')), for: hold, id: 'sez_zima' });
+      trig.push({ platform: 'numeric_state', entity_id: sezSrc, above: Number(String(c.sez.lato).replace(',', '.')), for: hold, id: 'sez_lato' });
+      trig.push({ platform: 'state', entity_id: LATO_BOOL, to: ['on', 'off'], id: 'sez_chg' });
+    }
     const wyjOn = !!(c.wyj.on && (Number(c.wyj.min) || 0) > 0);
     if (wyjOn) {
       trig.push({ platform: 'state', entity_id: WYJ_BOOL });
@@ -1270,6 +1307,21 @@ class CompitNanoOneCard extends HTMLElement {
     if (wyjOn) {
       ch.push({ conditions: [{ condition: 'trigger', id: 'wyj_off' }], sequence: [yoff] });
       ch.push({ conditions: [{ condition: 'trigger', id: 'wjazd1' }, { condition: 'state', entity_id: WYJ_BOOL, state: 'on' }], sequence: [yoff] });
+    }
+    if (sezOn) {
+      ch.push({ conditions: [{ condition: 'trigger', id: 'sez_zima' }], sequence: [{ service: 'input_boolean.turn_off', target: { entity_id: LATO_BOOL } }] });
+      ch.push({ conditions: [{ condition: 'trigger', id: 'sez_lato' }], sequence: [{ service: 'input_boolean.turn_on', target: { entity_id: LATO_BOOL } }] });
+      const setSez = (sez) => {
+        const seq = [];
+        TZK.forEach((k) => { const v = this._n(c.tz[sez][k]); if (v !== null && this._st(k)) seq.push({ service: 'number.set_value', target: { entity_id: this._id(k) }, data: { value: v } }); });
+        const opt = sez === 'lato' ? c.sez.el : c.sez.ez;
+        if (c.sez.esp && opt && this._st('set_sezon')) seq.push({ service: 'select.select_option', target: { entity_id: this._id('set_sezon') }, data: { option: opt } });
+        return seq;
+      };
+      [['lato', 'on'], ['zima', 'off']].forEach(([sez, st]) => {
+        const seq = setSez(sez);
+        if (seq.length) ch.push({ conditions: [{ condition: 'trigger', id: 'sez_chg' }, { condition: 'state', entity_id: LATO_BOOL, state: st }], sequence: this._lockSeq(this._wt()).concat(seq) });
+      });
     }
     if (c.z[0].wiet && (Number(c.wiet.min) || 0) > 0) ch.push({ conditions: [{ condition: 'trigger', id: 'wjazd1' }], sequence: [bon] });
     if (c.z[1].wiet && (Number(c.wiet.min) || 0) > 0) ch.push({ conditions: [{ condition: 'trigger', id: 'wjazd2' }], sequence: [bon] });
@@ -1297,7 +1349,7 @@ class CompitNanoOneCard extends HTMLElement {
     }
     return {
       id: AUTO_IDS[0], alias: 'Rekuperacja – sterownik',
-      description: 'Utworzone przez kartę compit-nano-one-card (Harmonogram + Strefy). Co minutę ustala tryb i %: wyjazd (wietrzenie po wyjeździe, potem nikogo) > wietrzenie wjazdu > czujniki (najsilniejszy) > reguły > cykle > harmonogram. Zmieniaj w karcie, nie tutaj.',
+      description: 'Utworzone przez kartę compit-nano-one-card (Harmonogram + Strefy). Sezon lato/zima wg temp. zewnętrznej (input_boolean.rekuperacja_lato). Co minutę ustala tryb i %: wyjazd (wietrzenie po wyjeździe, potem nikogo) > wietrzenie wjazdu > czujniki (najsilniejszy) > reguły > cykle > harmonogram. Zmieniaj w karcie, nie tutaj.',
       mode: 'queued', max: 10, max_exceeded: 'silent',
       variables: { compit_cfg: c },
       trigger: trig, condition: [], action,
@@ -1307,6 +1359,16 @@ class CompitNanoOneCard extends HTMLElement {
   async _delAuto(id) {
     try { await this._hass.callApi('DELETE', 'config/automation/config/' + id); } catch (e) { /* nie bylo */ }
     if (this._autoExists) this._autoExists[id] = false;
+  }
+
+  async _ensureLatoBool() {
+    if (this._hass.states[LATO_BOOL]) return;
+    let list = [];
+    try { list = await this._hass.callWS({ type: 'input_boolean/list' }) || []; } catch (e) { list = []; }
+    if (!list.some((x) => x.id === LATO_BOOL.split('.')[1] || x.name === 'Rekuperacja lato')) {
+      await this._hass.callWS({ type: 'input_boolean/create', name: 'Rekuperacja lato', icon: 'mdi:weather-sunny' });
+      this._pushLog({ t: new Date(), e: 'karta', s: 'Dodano przełącznik ' + LATO_BOOL });
+    }
   }
 
   async _ensureWyjBool() {
@@ -1352,6 +1414,19 @@ class CompitNanoOneCard extends HTMLElement {
       await this._ensureWietBool();
       done.push('przełącznik wietrzenia');
       if (cfg.wyj.on) { await this._ensureWyjBool(); done.push('przełącznik wietrzenia po wyjeździe'); }
+      if (cfg.sez.on) {
+        const had = !!this._hass.states[LATO_BOOL];
+        await this._ensureLatoBool();
+        done.push('przełącznik sezonu');
+        // stan poczatkowy wg temp. zewnetrznej (wyzwalacz numeric_state lapie dopiero przejscie przez prog)
+        const v = this._n((this._hass.states[this._sezSrc()] || {}).state);
+        if (!had && v !== null) {
+          setTimeout(() => {
+            const lato = v > this._n(cfg.sez.lato) ? true : v < this._n(cfg.sez.zima) ? false : null;
+            if (lato !== null && this._hass.states[LATO_BOOL]) this._hass.callService('input_boolean', lato ? 'turn_on' : 'turn_off', { entity_id: LATO_BOOL });
+          }, 3000);
+        }
+      }
       const a = this._genCtl();
       await this._hass.callApi('POST', 'config/automation/config/' + a.id, a);
       this._autoExists[a.id] = true;
@@ -1377,7 +1452,7 @@ class CompitNanoOneCard extends HTMLElement {
     } catch (e) { /* brak */ }
     try {
       const bl = await this._hass.callWS({ type: 'input_boolean/list' }) || [];
-      for (const eid of [WIET_BOOL, WYJ_BOOL]) {
+      for (const eid of [WIET_BOOL, WYJ_BOOL, LATO_BOOL]) {
         const b = bl.find((x) => x.id === eid.split('.')[1]);
         if (b) await this._hass.callWS({ type: 'input_boolean/delete', input_boolean_id: b.id });
       }
@@ -1514,7 +1589,7 @@ class CompitNanoOneCard extends HTMLElement {
 
   // bloki dnia: [{slot index | -1 (przeniesione z dnia wczesniej), start, end}]
   _dayBlocks(di) {
-    const sl = this._draft.sched.slots;
+    const sl = this._sl();
     const ev = [];
     sl.forEach((s, i) => { if (s.d.includes(DAYS[di][0])) ev.push({ i, m: this._min(s.t) }); });
     ev.sort((a, b) => a.m - b.m || a.i - b.i);
@@ -1540,10 +1615,46 @@ class CompitNanoOneCard extends HTMLElement {
     return out;
   }
 
+  _sezChips() {
+    const c = this._draft;
+    if (!c.sez.on) return '';
+    const e = this._sedit(), now = this._isLato() ? 'lato' : 'zima';
+    return `<div class="row small"><span class="mute">Edytujesz harmonogram:</span>
+      <button class="chip ${e === 'zima' ? 'on' : ''}" data-sed="zima">❄ Zima${now === 'zima' ? ' (teraz)' : ''}</button>
+      <button class="chip ${e === 'lato' ? 'on' : ''}" data-sed="lato">☀ Lato${now === 'lato' ? ' (teraz)' : ''}</button>
+      <button class="mini" data-sezcopy="${e === 'lato' ? 'zima' : 'lato'}">skopiuj z ${e === 'lato' ? 'zimy' : 'lata'}</button></div>`;
+  }
+
+  _renderSez() {
+    const c = this._draft, z = c.sez, src = this._sezSrc(), ss = src && this._hass.states[src], b = this._hass.states[LATO_BOOL];
+    const tEnts = Object.keys(this._hass.states).filter((id) => id.startsWith('sensor.') && /°C/.test(this._hass.states[id].attributes.unit_of_measurement || '')).sort();
+    const sezSel = this._st('set_sezon');
+    const sopts = sezSel ? (sezSel.attributes.options || []) : [];
+    const osel = (path, val, guess) => { const v = val || ''; return `<select data-bind="${path}" data-rr><option value="">—</option>${sopts.map((o) => `<option value="${esc(o)}" ${o === v ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`; };
+    const rows = TZK.filter((k) => this._st(k)).map((k) => `<tr><td>${esc(DEFAULT_E[k][2])}</td>
+      <td><input class="sm" inputmode="decimal" data-bind="tz.zima.${k}" value="${esc(c.tz.zima[k])}" placeholder="—"> °C</td>
+      <td><input class="sm" inputmode="decimal" data-bind="tz.lato.${k}" value="${esc(c.tz.lato[k])}" placeholder="—"> °C</td></tr>`).join('');
+    return `<div class="z1h">
+      <div class="zh"><label class="tgl"><input type="checkbox" data-bind="sez.on" data-rr ${z.on ? 'checked' : ''}> <b>${ico('sun')} Sezon lato / zima (sam się przełącza)</b></label>
+        ${z.on ? `<span class="zb ${this._isLato() ? 'z2' : 'z1'}">teraz: ${b ? (b.state === 'on' ? '☀ LATO' : '❄ ZIMA') : 'po zapisie'}</span>` : ''}</div>
+      ${z.on ? `<div class="srow"><label>Temp. zewnętrzna <select data-bind="sez.src" data-rr><option value="">auto (${esc(src || 'brak')})</option>${tEnts.map((id) => `<option value="${esc(id)}" ${id === z.src ? 'selected' : ''}>${esc(this._hass.states[id].attributes.friendly_name || id)}</option>`).join('')}</select></label>
+          <span class="small mute">teraz: ${ss ? esc(ss.state) + ' °C' : '—'}</span></div>
+        <div class="srow">${this._numIn('sez.zima', z.zima, '❄ Zima poniżej', '°C')}${this._numIn('sez.lato', z.lato, '☀ Lato powyżej', '°C')}${this._numIn('sez.hold', z.hold, 'przez', 'h')}
+          <button class="mini" data-sezset="zima">❄ zima teraz</button><button class="mini" data-sezset="lato">☀ lato teraz</button></div>
+        <div class="sublbl">Temperatury zadane w reku (wpisywane przy zmianie sezonu)</div>
+        ${rows ? `<table class="ptab"><tr><th></th><th>❄ Zima</th><th>☀ Lato</th></tr>${rows}</table>` : '<div class="small mute">Brak encji temperatur zadanych z ESP.</div>'}
+        <div class="small mute">„Ręczna” to też domyślna temperatura wpisu w harmonogramie danego sezonu (gdy wpis nie ma własnej).</div>
+        ${sezSel ? `<div class="srow"><label class="tgl"><input type="checkbox" data-bind="sez.esp" data-rr ${z.esp ? 'checked' : ''}> Przestaw też SEZON w ESP</label>
+          ${z.esp ? `<label>zima → ${osel('sez.ez', z.ez)}</label><label>lato → ${osel('sez.el', z.el)}</label>` : ''}</div>` : ''}
+        <div class="small mute">Przełącza się dopiero, gdy temperatura trzyma się za progiem przez podany czas. Przełącznik <code>${LATO_BOOL}</code> (ON = lato) powstaje przy zapisie.</div>` : '<div class="small mute">Wyłączone: działa jeden harmonogram (zima).</div>'}
+    </div>`;
+  }
+
   _renderChart() {
-    const c = this._draft, sl = c.sched.slots;
+    const c = this._draft, sl = this._sl();
     const d = new Date(), today = (d.getDay() + 6) % 7, nowM = d.getHours() * 60 + d.getMinutes();
     const pc = (m) => (m / 1440 * 100).toFixed(3) + '%';
+    const sezHead = this._sezChips();
     const nf = this._min(c.night.from), nt = this._min(c.night.to);
     const nightBands = nf > nt ? [[nf, 1440], [0, nt]] : [[nf, nt]];
     const marks = this._cycMarks(c.cyc.night, nf, (m) => this._isNight(m)).map((m) => [m, 'n'])
@@ -1562,32 +1673,33 @@ class CompitNanoOneCard extends HTMLElement {
         ${di === today ? `<i class="nowline" style="left:${pc(nowM)}"></i>` : ''}</div></div>`;
     }).join('');
     const used = [...new Set(sl.map((s) => s.tryb).filter(Boolean))];
-    return `<div class="wk">${head}${rows}</div>
+    return `${sezHead}<div class="wk">${head}${rows}</div>
       <div class="legend">${used.map((t) => `<span><i style="background:${this._modeColor(t)}"></i>${esc(t)}</span>`).join('')}
         <span><i class="lg-night"></i>noc ${esc(c.night.from)}–${esc(c.night.to)}</span>${marks.length ? '<span><i class="lg-cyc"></i>start cyklu</span>' : ''}<span><i class="lg-now"></i>teraz</span></div>
       <div class="small mute">Klik w blok = edycja, dwuklik = nowy wpis od tej godziny (klik w pusty pasek też dodaje). Przeciągnij lewą krawędź bloku, żeby zmienić godzinę (co 15 min).</div>`;
   }
 
   _slotEditor(i) {
-    const s = this._draft.sched.slots[i], W = this._wt();
+    const s = this._sl()[i], W = this._wt(), sp = this._sp(), defT = this._draft.tz[this._sedit()].t_reczna;
     if (!s) return '';
     const g = this._gearOf(s.tryb);
     return `<div class="sedit"><div class="zh"><b>Wpis ${esc(s.t)} · ${esc(s.tryb || '—')}</b><button class="mini" data-sclose>✕ zamknij</button></div>
       <div class="days">${DAYS.map(([k, l]) => `<button class="chip ${s.d.includes(k) ? 'on' : ''}" data-day="${i}:${k}">${l}</button>`).join('')}
         <button class="mini" data-dayset="${i}:wd">Pn–Pt</button><button class="mini" data-dayset="${i}:we">Weekend</button><button class="mini" data-dayset="${i}:all">Cały tydzień</button></div>
-      <div class="srow"><label>Od <input type="time" step="900" data-bind="sched.slots.${i}.t" data-rr value="${esc(s.t)}"></label>
-        <label>Tryb ${this._trybSel('sched.slots.' + i + '.tryb', s.tryb, W, '— bez zmiany —')}</label>
-        ${W.temp ? this._numIn(`sched.slots.${i}.temp`, s.temp, 'Temp. ręczna', '°C') : ''}
-        ${g ? this._pctIn(`sched.slots.${i}.pn`, s.pn, 'Nawiew') + this._pctIn(`sched.slots.${i}.pw`, s.pw, 'Wywiew') : ''}
+      <div class="srow"><label>Od <input type="time" step="900" data-bind="${sp}.${i}.t" data-rr value="${esc(s.t)}"></label>
+        <label>Tryb ${this._trybSel(sp + '.' + i + '.tryb', s.tryb, W, '— bez zmiany —')}</label>
+        ${W.temp ? `<label>Temperatura <input class="sm" inputmode="decimal" data-bind="${sp}.${i}.temp" value="${esc(s.temp)}" placeholder="${esc(defT === '' ? '—' : defT)}"> °C</label>` : ''}
+        ${g ? this._pctIn(`${sp}.${i}.pn`, s.pn, 'Nawiew') + this._pctIn(`${sp}.${i}.pw`, s.pw, 'Wywiew') : ''}
         <button class="mini" data-delslot="${i}">🗑 usuń wpis</button></div>
-      ${g ? `<div class="small mute">Puste % = domyślne % biegu ${g} (niżej).</div>` : ''}</div>`;
+      ${g ? `<div class="small mute">Puste % = domyślne % biegu ${g} (niżej).</div>` : ''}
+      ${W.temp ? `<div class="small mute">Pusta temperatura = temp. ${this._sedit()} z sekcji Sezon${defT === '' ? ' (nieustawiona – bez zmiany)' : ' (' + esc(defT) + ' °C)'}.</div>` : ''}</div>`;
   }
 
   _renderHarm() {
     if (!this._draft) return '<div class="mute">Wczytuję ustawienia z HA…</div>';
     const c = this._draft, W = this._wt();
     const wb = this._hass.states[WIET_BOOL];
-    const list = c.sched.slots.map((s, i) => `<div class="lrow"><span class="dot2" style="background:${this._modeColor(s.tryb)}"></span>
+    const list = this._sl().map((s, i) => `<div class="lrow"><span class="dot2" style="background:${this._modeColor(s.tryb)}"></span>
       <span>${esc(s.d.map((d) => DAYS.find((x) => x[0] === d)[1]).join(' ') || 'bez dni')}</span><b>${esc(s.t)}</b><span>${esc(s.tryb || '—')}</span>
       <button class="mini" data-sopen="${i}">edytuj</button></div>`).join('');
     const rule = (r, ri) => `<div class="rule"><div class="zh"><label class="tgl"><input type="checkbox" data-bind="rules.${ri}.on" data-rr ${r.on ? 'checked' : ''}>
@@ -1607,12 +1719,13 @@ class CompitNanoOneCard extends HTMLElement {
     const ents = Object.keys(this._hass.states).filter((id) => /^(light|switch|binary_sensor|sensor|input_boolean|fan|media_player)\./.test(id)).sort();
     return `<div class="plan" data-form>
       ${this._planHead()}
+      ${this._renderSez()}
       <div class="zh"><label class="tgl"><input type="checkbox" data-bind="sched.on" data-rr ${c.sched.on ? 'checked' : ''}> <b>Harmonogram tygodniowy</b></label>
         <span class="small mute">działa, gdy ktoś jest w strefie 1${c.z[0].on && c.phones.length ? '' : ' (bez telefonów / strefy: zawsze)'}</span></div>
       ${this._renderChart()}
       <div class="row"><button class="opt" data-addslot>+ Dodaj wpis</button></div>
       ${this._slotEdit !== undefined && this._slotEdit !== null ? this._slotEditor(this._slotEdit) : ''}
-      <details class="lst"><summary>Lista wpisów (${c.sched.slots.length})</summary>${list || '<div class="small mute">Brak wpisów.</div>'}</details>
+      <details class="lst"><summary>Lista wpisów – ${this._sedit()} (${this._sl().length})</summary>${list || '<div class="small mute">Brak wpisów.</div>'}</details>
       <div class="pgrid">
         <div>
           <h3 class="rest">Noc i biegi</h3>
@@ -1969,9 +2082,9 @@ class CompitNanoOneCard extends HTMLElement {
       const di = Number(tr.dataset.track), rect = tr.getBoundingClientRect();
       const m = Math.max(0, Math.min(1425, Math.round((ev.clientX - rect.left) / rect.width * 1440 / 15) * 15));
       const add = () => {
-        const src = blk ? this._draft.sched.slots[Number(blk.dataset.blk)] : null;
-        this._draft.sched.slots.push({ d: [DAYS[di][0]], t: this._hm(m), tryb: src ? src.tryb : '', temp: '', pn: '', pw: '' });
-        this._slotEdit = this._draft.sched.slots.length - 1;
+        const src = blk ? this._sl()[Number(blk.dataset.blk)] : null;
+        this._sl().push({ d: [DAYS[di][0]], t: this._hm(m), tryb: src ? src.tryb : '', temp: '', pn: '', pw: '' });
+        this._slotEdit = this._sl().length - 1;
         this._render();
       };
       // klik w pusty pasek / blok przeniesiony z dnia wczesniej = nowy wpis; klik w blok = edycja, dwuklik w blok = nowy wpis w tym miejscu
@@ -1983,7 +2096,7 @@ class CompitNanoOneCard extends HTMLElement {
     }));
     R.querySelectorAll('[data-drag]').forEach((h) => h.addEventListener('pointerdown', (ev) => {
       ev.stopPropagation(); ev.preventDefault();
-      const i = Number(h.dataset.drag), s = this._draft.sched.slots[i];
+      const i = Number(h.dataset.drag), s = this._sl()[i];
       const tr = h.closest('[data-track]'), rect = tr.getBoundingClientRect();
       const blk = h.closest('.blk'), lab = blk.querySelector('.bl');
       const x0 = ev.clientX;
@@ -2018,7 +2131,7 @@ class CompitNanoOneCard extends HTMLElement {
     });
     R.querySelectorAll('[data-day]').forEach((b) => b.addEventListener('click', () => {
       const [i, k] = b.dataset.day.split(':');
-      const d = this._draft.sched.slots[i].d, j = d.indexOf(k);
+      const d = this._sl()[i].d, j = d.indexOf(k);
       if (j >= 0) d.splice(j, 1); else d.push(k);
       d.sort((a, b2) => DAYS.findIndex((x) => x[0] === a) - DAYS.findIndex((x) => x[0] === b2));
       this._render();
@@ -2026,17 +2139,17 @@ class CompitNanoOneCard extends HTMLElement {
     R.querySelectorAll('[data-dayset]').forEach((b) => b.addEventListener('click', () => {
       const [i, k] = b.dataset.dayset.split(':');
       const all = DAYS.map((x) => x[0]);
-      this._draft.sched.slots[i].d = k === 'wd' ? all.slice(0, 5) : k === 'we' ? all.slice(5) : all;
+      this._sl()[i].d = k === 'wd' ? all.slice(0, 5) : k === 'we' ? all.slice(5) : all;
       this._render();
     }));
     R.querySelectorAll('[data-addslot]').forEach((b) => b.addEventListener('click', () => {
-      this._draft.sched.slots.push({ d: DAYS.map((x) => x[0]).slice(0, 5), t: '06:00', tryb: '', temp: '', pn: '', pw: '' });
-      this._slotEdit = this._draft.sched.slots.length - 1;
+      this._sl().push({ d: DAYS.map((x) => x[0]).slice(0, 5), t: '06:00', tryb: '', temp: '', pn: '', pw: '' });
+      this._slotEdit = this._sl().length - 1;
       this._render();
     }));
     R.querySelectorAll('[data-sopen]').forEach((b) => b.addEventListener('click', () => { this._slotEdit = Number(b.dataset.sopen); this._render(); }));
     R.querySelectorAll('[data-sclose]').forEach((b) => b.addEventListener('click', () => { this._slotEdit = null; this._render(); }));
-    R.querySelectorAll('[data-delslot]').forEach((b) => b.addEventListener('click', () => { this._draft.sched.slots.splice(Number(b.dataset.delslot), 1); this._slotEdit = null; this._render(); }));
+    R.querySelectorAll('[data-delslot]').forEach((b) => b.addEventListener('click', () => { this._sl().splice(Number(b.dataset.delslot), 1); this._slotEdit = null; this._render(); }));
     R.querySelectorAll('[data-addrule]').forEach((b) => b.addEventListener('click', () => {
       this._draft.rules.push({ name: 'Reguła ' + (this._draft.rules.length + 1), on: true, conds: [{ e: '', op: 'on', v: '' }], dpn: 90, dpw: 90, npn: 70, npw: 70, hold: 10 });
       this._render();
@@ -2072,6 +2185,17 @@ class CompitNanoOneCard extends HTMLElement {
       const [k, i] = b.dataset.deltrg.split(':');
       this._draft.trg[k].splice(Number(i), 1);
       this._render();
+    }));
+    R.querySelectorAll('[data-sed]').forEach((b) => b.addEventListener('click', () => { this._sEd = b.dataset.sed; this._slotEdit = null; this._render(); }));
+    R.querySelectorAll('[data-sezset]').forEach((b) => b.addEventListener('click', () => {
+      if (!this._hass.states[LATO_BOOL]) { this._flashMsg(false, 'Najpierw Zapisz w HA – wtedy powstanie przełącznik sezonu.'); this._render(); return; }
+      this._hass.callService('input_boolean', b.dataset.sezset === 'lato' ? 'turn_on' : 'turn_off', { entity_id: LATO_BOOL });
+    }));
+    R.querySelectorAll('[data-sezcopy]').forEach((b) => b.addEventListener('click', () => {
+      const from = b.dataset.sezcopy, c = this._draft, src = from === 'lato' ? c.sched.lato : c.sched.slots;
+      const cp = src.map((x) => Object.assign({}, x, { d: x.d.slice() }));
+      if (from === 'lato') c.sched.slots = cp; else c.sched.lato = cp;
+      this._slotEdit = null; this._render();
     }));
     if ((this._tab === 'harmonogram' || this._tab === 'strefy') && this._draft) this._wireChart();
     if (this._tab === 'strefy' && this._draft) this._mountMap();

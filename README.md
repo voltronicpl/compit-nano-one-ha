@@ -84,6 +84,12 @@ Mapa w Strefach to od v2.6 **OpenStreetMap bez żadnego klucza API** (biblioteka
 
 Kolejność w sterowniku: nikogo w strefie 1 → wietrzenie po wyjeździe → strefa 2 / „nikogo nie ma”; ktoś jest → wietrzenie wjazdu → czujniki → reguły → cykle → harmonogram.
 
+**Sezon lato / zima** (zakładka Harmonogram, na górze): po włączeniu sterownik sam przełącza sezon według temperatury zewnętrznej (domyślnie BT1 z pompy, a jak jej nie ma, czerpnia; można wybrać inny czujnik °C). Zima włącza się poniżej progu, lato powyżej drugiego progu, i dopiero gdy temperatura trzyma się za progiem przez X h (domyślnie 12 / 16 °C, 6 h). Przyciski „zima teraz” / „lato teraz” przełączają ręcznie. Stan sezonu to `input_boolean.rekuperacja_lato` (ON = lato), karta zakłada go przy zapisie.
+- Dwa harmonogramy tygodniowe: **zima** (dotychczasowy) i **lato** (na start kopia zimy). Nad wykresem wybierasz, który edytujesz, a przycisk „skopiuj z …” kopiuje cały harmonogram z drugiego sezonu.
+- Temperatury zadane (ręczna, dzień, noc, poza domem) osobno na zimę i lato. Sterownik wpisuje je do reku przy zmianie sezonu.
+- Każdy wpis harmonogramu ma własną **temperaturę**. Pusta oznacza „ręczną” z danego sezonu.
+- Opcjonalnie przy zmianie sezonu przestawia też SEZON w ESP (wybierasz, która opcja to zima, a która lato).
+
 **PROGRAM → Strefa:** w wyborze trybu (tam gdzie Ręczny Stop / Ręczny bieg 1–3) jest opcja **Strefa**. Włącza sterownik i od razu go odpala, więc tryb i % idą wg tego, co ustawione w Strefach (wyjazd, strefa 2, a w domu harmonogram z regułami). Na pasku widać wtedy `STREFA · <tryb>`. Wybór innego trybu ręcznie wyłącza Strefę (sterownik), żeby po minucie nie nadpisał ręcznego wyboru. Strefa działa dopiero po kliknięciu **Zapisz w HA** w zakładce Strefy.
 
 ## Instalacja przez HACS
@@ -227,6 +233,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v2.8** – sezon lato/zima wg temperatury zewnętrznej (progi + czas trzymania, ręczne przełączenie), osobne harmonogramy lato i zima, osobne temperatury zadane na sezon, temperatura w każdym wpisie (domyślnie ręczna z sezonu), opcjonalnie SEZON w ESP.
 - **v2.7** – Leaflet (licencja BSD-2) wbudowany w plik karty, więc mapa nie zależy od unpkg/jsdelivr; CDN zostaje tylko jako zapas; karta nie nadpisuje globalnego `window.L`.
 - **v2.6** – mapa w Strefach domyślnie na OpenStreetMap bez klucza API (zamiast mapy HA / CARTO), Leaflet z unpkg albo jsdelivr, komunikat gdy podkład się nie ładuje, opcje `map: ha` i `map_tiles:`.
 - **v2.5** – w Strefach sekcja **Harmonogram strefy 1**: wjazd (wietrzenie min + %), wyjazd (nowe: wietrzenie po wyjeździe min + %), nikogo nie ma (tryb + %), wietrzenie co jakiś czas, czujniki światło / woda / światło+woda osobno (%, czas po wyłączeniu, najsilniejszy wygrywa), harmonogram tygodniowy pod spodem.
