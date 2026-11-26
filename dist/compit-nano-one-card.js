@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v2.3
+ * compit-nano-one-card  v2.4
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -19,7 +19,10 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v2.3';
+const VERSION = 'v2.4';
+// v2.4: Leaflet z unpkg jako zapas, gdy mapa HA (ha-map) nie wstanie
+const LEAFLET_URL = 'https://unpkg.com/leaflet@1.9.4/dist/';
+let LEAFLET_P = null;
 // v1.9: automatyki i strefy tworzone przez karte, panel w pasku bocznym
 const AUTO_IDS = ['compit_rekuperacja_sterownik'];
 const OLD_IDS = ['compit_rekuperacja_harmonogram', 'compit_rekuperacja_strefa_1', 'compit_rekuperacja_strefa_2']; // v1.9-v2.2, kasowane przy zapisie
@@ -535,6 +538,7 @@ class CompitNanoOneCard extends HTMLElement {
     this.shadowRoot.querySelectorAll('[data-pop]').forEach((el) => el.addEventListener('click', () => { this._pop = this._pop === el.dataset.pop ? null : el.dataset.pop; this._render(); }));
     this.shadowRoot.querySelectorAll('[data-popclose]').forEach((el) => el.addEventListener('click', () => { this._pop = null; this._render(); }));
     this.shadowRoot.querySelectorAll('[data-opt]').forEach((el) => el.addEventListener('click', () => this._selectOpt(el.dataset.optkey, el.dataset.opt)));
+    this.shadowRoot.querySelectorAll('[data-strefa]').forEach((el) => el.addEventListener('click', () => this._strefaOn()));
     this.shadowRoot.querySelectorAll('[data-num]').forEach((el) => el.addEventListener('click', () => this._numStep(el.dataset.num, Number(el.dataset.dir))));
     this.shadowRoot.querySelectorAll('[data-edit]').forEach((el) => el.addEventListener('click', (ev) => { ev.stopPropagation(); this._edit = el.dataset.edit; this._render(); }));
     this.shadowRoot.querySelectorAll('[data-save]').forEach((el) => el.addEventListener('click', () => this._saveEdit(el.dataset.save, el.parentNode.querySelector('[data-inp]'))));
@@ -689,10 +693,37 @@ class CompitNanoOneCard extends HTMLElement {
       ${(() => { const d = this._regNoState(); return d.length ? `<div class="small"><b>W rejestrze HA, ale wyłączone / bez stanu (${d.length}):</b> ${d.map((x) => `<code>${esc(x)}</code>`).join(' ')} – włącz je w Ustawienia → Encje.</div>` : ''; })()}</div>`;
   }
 
-  _selectOpt(key, opt) {
+  async _selectOpt(key, opt) {
     const id = this._id(key);
     this._pop = null;
+    // v2.4: reczny wybor trybu wylacza sterownik (opcja Strefa), inaczej nadpisalby go po minucie
+    const ctl = this._ctlEnt();
+    if (ctl && ctl.state === 'on' && /^set_(tryb|program|bieg)$/.test(key)) {
+      try {
+        await this._hass.callService('automation', 'turn_off', { entity_id: ctl.entity_id, stop_actions: true });
+        this._pushLog({ t: new Date(), e: 'karta', s: 'Strefa → WYŁ. (ręczny wybór: ' + opt + ')' });
+      } catch (e) { this._flashMsg(false, '✗ nie wyłączyłem sterownika: ' + (e && e.message ? e.message : e)); }
+    }
     this._call('select', 'select_option', { entity_id: id, option: opt }, DEFAULT_E[key][2] + ' → ' + opt);
+  }
+
+  // v2.4: sterownik (automatyka karty) jako encja; ON = tryb Strefa
+  _ctlEnt() {
+    const id = this._autoEnts().find((x) => this._hass.states[x] && this._hass.states[x].attributes.id === AUTO_IDS[0]);
+    return id ? this._hass.states[id] : null;
+  }
+
+  async _strefaOn() {
+    this._pop = null;
+    const ctl = this._ctlEnt();
+    if (!ctl) { this._flashMsg(false, 'Najpierw ustaw strefy w zakładce Strefy i kliknij Zapisz w HA – dopiero wtedy jest co włączyć.'); this._render(); return; }
+    try {
+      if (ctl.state !== 'on') await this._hass.callService('automation', 'turn_on', { entity_id: ctl.entity_id });
+      await this._hass.callService('automation', 'trigger', { entity_id: ctl.entity_id, skip_condition: true });
+      this._pushLog({ t: new Date(), e: 'karta', s: 'Strefa → WŁ. (sterownik ustawia tryb wg stref)' });
+      this._flashMsg(true, '✓ Strefa: tryb i % ustawia teraz sterownik wg stref (wyjazd / strefa 2 / harmonogram w domu)');
+    } catch (e) { this._flashMsg(false, '✗ Strefa: ' + (e && e.message ? e.message : e)); }
+    this._render();
   }
 
   _numStep(key, dir) {
@@ -787,7 +818,7 @@ class CompitNanoOneCard extends HTMLElement {
     };
     const filtrOk = filtr === null ? null : !/(wymie|brud|zabr|alarm|on|1)/i.test(filtr);
     return `<div class="bar">
-      ${cell(this._st('set_tryb') ? 'tryb' : 'program', 'tryb', 'sync', 'PROGRAM', prog ? prog.toUpperCase() : null, '', true)}
+      ${cell(this._st('set_tryb') ? 'tryb' : 'program', 'tryb', 'sync', 'PROGRAM', (() => { const ct = this._ctlEnt(); const z = ct && ct.state === 'on'; return prog ? (z ? 'STREFA · ' : '') + prog.toUpperCase() : (z ? 'STREFA' : null); })(), '', true)}
       ${cell('bypass', 'bypass_tryb', 'shuf', 'BYPASS', (byp ? byp.toUpperCase() : (this._st('bypass') ? (bypOpen ? 'OTWARTY' : 'ZAMKNIĘTY') : null)) + (byp && bypOpen ? ' ·  OTW.' : ''), 'acc')}
       ${cell('sezon', 'sezon', 'sun', 'SEZON', sez ? sez.toUpperCase() : null, 'acc')}
       <div class="bcell" data-e="${esc(this._id('filtr'))}">${ico('filt', filtrOk === false ? 'bad' : 'good')}<span class="bl">FILTR</span> <b class="${filtrOk === null ? 'mute' : filtrOk ? 'good' : 'bad'}">${filtr === null ? '—' : filtrOk ? 'OK' : esc(filtr.toUpperCase())}</b></div>
@@ -807,10 +838,14 @@ class CompitNanoOneCard extends HTMLElement {
     if (!s) return '';
     const opts = s.attributes.options || [];
     const can = this._canWrite();
+    const ctl = /^set_(tryb|program|bieg)$/.test(key) ? this._ctlEnt() : null;
+    const zOn = !!(ctl && ctl.state === 'on');
+    const zBtn = /^set_(tryb|program|bieg)$/.test(key) ? `<button class="opt ${zOn ? 'on' : ''}" data-strefa title="${ctl ? '' : 'najpierw zapisz Strefy w HA'}">${ico('map')} Strefa</button>` : '';
     return `<div class="pop">
       <div class="poph">${esc(DEFAULT_E[key][2])}: wybierz${can ? '' : ' <span class="warn">(zapis wyłączony, włącz „Sterowanie z HA”)</span>'}<button class="mini x" data-popclose>✕</button></div>
       ${this._flashBox()}
-      <div class="row">${opts.map((o) => `<button class="opt ${o === s.state ? 'on' : ''}" data-opt="${esc(o)}" data-optkey="${key}" ${can ? '' : 'disabled'}>${esc(o)}</button>`).join('')}</div>
+      <div class="row">${opts.map((o) => `<button class="opt ${o === s.state && !zOn ? 'on' : ''}" data-opt="${esc(o)}" data-optkey="${key}" ${can ? '' : 'disabled'}>${esc(o)}</button>`).join('')}${zBtn}</div>
+      ${zBtn ? `<div class="small mute">${zOn ? 'Strefa WŁ.: sterownik sam wybiera tryb wg stref. Wybór innego trybu wyłącza Strefę.' : 'Strefa: tryb i % ustawia sterownik wg ustawień z zakładki Strefy (wyjazd, strefa 2, w domu harmonogram).'}</div>` : ''}
     </div>`;
   }
 
@@ -1591,7 +1626,7 @@ class CompitNanoOneCard extends HTMLElement {
       ${zone(0)}${zone(1)}
       </div><div class="mapcol">
       <h3>${ico('map')} Mapa</h3>
-      <div class="row small"><span class="mute">Klik w mapę ustawia środek:</span>
+      <div class="row small"><span class="mute">Klik w mapę stawia znacznik środka strefy:</span>
         ${[0, 1].map((i) => `<button class="mini ${(this._mapPick || 0) === i ? 'on' : ''}" data-mpick="${i}" ${c.z[i].on ? '' : 'disabled'}>Strefa ${i + 1}</button>`).join('')}
         <button class="mini" data-mfit>pokaż strefy</button></div>
       <div id="mapslot"><slot name="map"></slot></div>
@@ -1610,7 +1645,7 @@ class CompitNanoOneCard extends HTMLElement {
     if (window.loadCardHelpers) {
       try { const h = await window.loadCardHelpers(); const c = await h.createCardElement({ type: 'map', entities: ['zone.home'] }); if (c) c.hass = this._hass; } catch (e) { /* dalej czekamy */ }
     }
-    await Promise.race([customElements.whenDefined('ha-map'), new Promise((_, rej) => setTimeout(() => rej(new Error('HA nie udostępnił mapy (ha-map)')), 10000))]);
+    await Promise.race([customElements.whenDefined('ha-map'), new Promise((_, rej) => setTimeout(() => rej(new Error('HA nie udostępnił mapy (ha-map)')), 5000))]);
   }
 
   _mountMap() {
@@ -1621,40 +1656,81 @@ class CompitNanoOneCard extends HTMLElement {
       this._mapWrap.innerHTML = '<div style="padding:20px;opacity:.7;font-size:.88em">Ładuję mapę HA…</div>';
       this.appendChild(this._mapWrap);
     }
-    if (this._haMap && this._haMap.leafletMap && this._haMap.leafletMap !== this._map) this._bindMap();
+    if (this._haMap && this._haMap.leafletMap && this._haMap.Leaflet && this._haMap.leafletMap !== this._map) this._bindMap(this._haMap.Leaflet, this._haMap.leafletMap);
     if (this._map) { setTimeout(() => { if (this._map) { this._map.invalidateSize(); this._drawMap(); } }, 0); return; }
     if (this._mapLoading) return;
     this._mapLoading = true;
     (async () => {
-      await this._haMapReady();
-      const m = document.createElement('ha-map');
-      const dark = this._config.theme !== 'light';
-      m.hass = this._hass;
-      m.entities = [];
-      m.autoFit = false;
-      m.zoom = 15;
-      m.themeMode = dark ? 'dark' : 'auto';
-      m.darkMode = dark;
-      m.style.cssText = 'display:block;height:100%;';
-      this._mapWrap.innerHTML = '';
-      this._mapWrap.appendChild(m);
-      this._haMap = m;
-      const t0 = Date.now();
-      while (!(m.leafletMap && m.Leaflet)) {
-        if (Date.now() - t0 > 10000) throw new Error('mapa HA się nie uruchomiła');
-        await new Promise((r) => setTimeout(r, 150));
+      let ok = false, why = '';
+      try { ok = await this._tryHaMap(); } catch (e) { why = e.message; }
+      if (!ok) {
+        // v2.4: mapa HA nie wstala -> wlasny Leaflet z unpkg (jak w v1.9)
+        if (this._haMap) { try { this._haMap.remove(); } catch (e) { /* nic */ } this._haMap = null; }
+        this._pushLog({ t: new Date(), e: 'karta', s: 'Mapa HA nie wstała' + (why ? ' (' + why + ')' : '') + ' – ładuję Leaflet z unpkg' });
+        await this._ownMap();
       }
-      this._bindMap();
     })().catch((e) => {
       this._mapWrap.innerHTML = `<div style="padding:20px;opacity:.75;font-size:.88em">Mapa niedostępna: ${esc(e.message)}. Środek strefy wpisz ręcznie (szer./dł.) albo kliknij „środek = dom”.</div>`;
-      this._pushLog({ t: new Date(), e: 'karta', s: 'Mapa HA: ' + e.message });
+      this._pushLog({ t: new Date(), e: 'karta', s: 'Mapa: ' + e.message });
     }).finally(() => { this._mapLoading = false; });
   }
 
-  _bindMap() {
-    const m = this._haMap;
-    this._L = m.Leaflet;
-    this._map = m.leafletMap;
+  async _tryHaMap() {
+    await this._haMapReady();
+    const m = document.createElement('ha-map');
+    const dark = this._config.theme !== 'light';
+    m.hass = this._hass;
+    m.entities = [];
+    m.autoFit = false;
+    m.zoom = 15;
+    m.themeMode = dark ? 'dark' : 'auto';
+    m.darkMode = dark;
+    m.style.cssText = 'display:block;height:100%;';
+    this._mapWrap.innerHTML = '';
+    this._mapWrap.appendChild(m);
+    this._haMap = m;
+    const t0 = Date.now();
+    while (!(m.leafletMap && m.Leaflet)) {
+      if (Date.now() - t0 > 6000) return false;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    this._bindMap(m.Leaflet, m.leafletMap);
+    return true;
+  }
+
+  _loadLeaflet() {
+    if (window.L && window.L.map && window.L.circle) return Promise.resolve(window.L);
+    if (!LEAFLET_P) {
+      LEAFLET_P = new Promise((res, rej) => {
+        const sc = document.createElement('script');
+        sc.src = LEAFLET_URL + 'leaflet.js';
+        sc.onload = () => (window.L && window.L.map ? res(window.L) : rej(new Error('Leaflet wczytany, ale pusty')));
+        sc.onerror = () => { LEAFLET_P = null; rej(new Error('nie wczytałem Leaflet z unpkg (brak internetu?)')); };
+        document.head.appendChild(sc);
+      });
+    }
+    return LEAFLET_P;
+  }
+
+  async _ownMap() {
+    const L = await this._loadLeaflet();
+    const dark = this._config.theme !== 'light';
+    this._mapWrap.innerHTML = `<link rel="stylesheet" href="${LEAFLET_URL}leaflet.css">`;
+    const box = document.createElement('div');
+    box.style.cssText = 'position:absolute;inset:0;';
+    this._mapWrap.appendChild(box);
+    const z = this._draft && this._draft.z.find((x) => x.on);
+    const h = this._hass.config || {};
+    const c = z ? [Number(z.lat), Number(z.lon)] : [h.latitude || 52.2297, h.longitude || 21.0122];
+    const map = L.map(box, { zoomControl: true }).setView(c, 15);
+    L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark ? 'dark_all' : 'rastertiles/voyager'}/{z}/{x}/{y}{r}.png`,
+      { maxZoom: 20, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO' }).addTo(map);
+    this._bindMap(L, map);
+  }
+
+  _bindMap(L, map) {
+    this._L = L;
+    this._map = map;
     this._mapLayer = this._L.layerGroup().addTo(this._map);
     this._map.on('click', (e) => this._mapClick(e.latlng));
     this._mapFitted = false;

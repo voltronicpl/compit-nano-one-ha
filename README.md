@@ -72,7 +72,9 @@ Stare automatyki z v1.9–v2.2 (`compit_rekuperacja_harmonogram`, `_strefa_1`, `
 
 **Lewy pasek:** przy każdym otwarciu (konto administratora) karta sprawdza, czy w HA jest panel **Rekuperacja** (`/rekuperacja-nano`) z tą kartą na cały ekran, i jak go nie ma, zakłada go sama. Jak HA odmówi, na górze zakładki Rekuperator jest pasek z przyciskiem, błędem z HA i instrukcją do dodania ręcznie. Wyłączysz to opcją `sidebar: false`.
 
-Mapa w Strefach to wbudowana mapa HA (ta sama co w karcie Mapa, z tym samym podkładem). Jak się nie załaduje, karta pisze dlaczego, a środek strefy wpisujesz ręcznie.
+Mapa w Strefach to wbudowana mapa HA (ta sama co w karcie Mapa, z tym samym podkładem). Jak HA jej nie da w kilka sekund, karta sama ładuje Leaflet z unpkg (podkład CARTO/OpenStreetMap, potrzebny internet). Klik w mapę stawia znacznik środka wybranej strefy (przyciski Strefa 1 / Strefa 2 nad mapą) i rysuje okrąg z promieniem. Jak nie wstanie żadna, karta pisze dlaczego, a środek strefy wpisujesz ręcznie.
+
+**PROGRAM → Strefa:** w wyborze trybu (tam gdzie Ręczny Stop / Ręczny bieg 1–3) jest opcja **Strefa**. Włącza sterownik i od razu go odpala, więc tryb i % idą wg tego, co ustawione w Strefach (wyjazd, strefa 2, a w domu harmonogram z regułami). Na pasku widać wtedy `STREFA · <tryb>`. Wybór innego trybu ręcznie wyłącza Strefę (sterownik), żeby po minucie nie nadpisał ręcznego wyboru. Strefa działa dopiero po kliknięciu **Zapisz w HA** w zakładce Strefy.
 
 ## Instalacja przez HACS
 
@@ -215,6 +217,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v2.4** – mapa w Strefach znowu działa: jak mapa HA (ha-map) nie wstanie, karta ładuje Leaflet z unpkg; klik w mapę stawia znacznik środka strefy i rysuje okrąg; w PROGRAM nowa opcja **Strefa** (sterownik wg stref), ręczny wybór trybu wyłącza Strefę.
 - **v2.3** – jeden sterownik w HA zamiast 3 automatyk: harmonogram tylko gdy ktoś w strefie, noc, reguły z encji HA (np. łazienka), cykle dzień/noc, przełącznik `input_boolean.rekuperacja_wietrzenie`, linia „teraz steruje”; harmonogram jako wykres tygodniowy z przeciąganiem; mapa nie wraca na środek, przeciąganie środka i promienia; na szerokim ekranie mały schemat i 2–3 kolumny.
 - **v2.2** – panel w lewym pasku sprawdzany przy każdym otwarciu, pasek z przyciskiem „Dodaj Rekuperację do lewego paska”, błędem z HA i instrukcją ręczną; mapa w Strefach z HA (ha-map) zamiast unpkg / OpenStreetMap.
 - **v2.1** – wiatraczki i przepływ kręcą się z prędkością wentylatorów: nawiew z `wentylator_nawiewu`, wywiew z `wentylator_wywiewu` (0 % = stoi), zmiana % płynnie przyspiesza / zwalnia, animacja nie zaczyna się od nowa przy odświeżeniu karty.
