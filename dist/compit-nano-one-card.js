@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v1.9
+ * compit-nano-one-card  v2.0
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -19,7 +19,7 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v1.9';
+const VERSION = 'v2.0';
 // v1.9: automatyki i strefy tworzone przez karte, panel w pasku bocznym
 const AUTO_IDS = ['compit_rekuperacja_harmonogram', 'compit_rekuperacja_strefa_1', 'compit_rekuperacja_strefa_2'];
 const LS_CFG = 'compit-nano-one-plan';

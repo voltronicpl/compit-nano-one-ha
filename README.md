@@ -209,6 +209,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v2.0** – v1.8 (kafel Na zewnątrz z pompy BT1) + v1.9 (pasek boczny, Harmonogram, Strefy) razem w jednej wersji.
 - **v1.9** – panel Rekuperacja w pasku bocznym, zakładka Harmonogram (tygodniowy, tworzy automatykę w HA), zakładka Strefy (telefony, mapa z okręgami, strefa 1 + opcjonalna strefa 2, wjazd = wietrzenie X min i tryb normalny, wyjazd = przywrócenie % i tryb wyjazdu), w Sterowaniu linia „ostatnio sterowało”, wyzwolenia automatyk w logu.
 - **v1.8** – kafel **Na zewnątrz (pompa BT1)**: temperatura zewnętrzna z pompy ciepła (`sensor.hydrolution_temperatura_zewnetrzna_bt1`, opcja `zewn:`) i różnica do czerpni. Bez encji pompy kafla nie ma.
 - **v1.7** – pod YAML v1.8: kafle temperatur bez wartości pokazują „brak czujnika”, domyślnie bez znaku „?” przy czerpni i wywiewie (`niepewne:` dalej działa), sprawność odzysku mówi, którego czujnika brakuje.
