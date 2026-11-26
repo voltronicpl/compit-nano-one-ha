@@ -70,18 +70,16 @@ Stare automatyki z v1.9–v2.2 (`compit_rekuperacja_harmonogram`, `_strefa_1`, `
 
 **Strefy:** dowolna liczba telefonów (`device_tracker` z aplikacji HA albo `person`, liczy się GPS), okręgi na mapie HA. Środek przeciągasz kropką, promień uchwytem na krawędzi, albo klikasz w mapę. Wjazd pierwszego telefonu do strefy (z zaznaczonym wietrzeniem) włącza przełącznik wietrzenia. Telefon, który nie raportował dłużej niż „Nieaktualny po” (domyślnie 30 min), się nie liczy. 0 wyłącza to sprawdzanie. Odległości liczone w km, więc HA musi mieć system metryczny.
 
-**Wietrzenie jako przycisk (v2.9):** przy „Zapisz w HA” karta zakłada też `input_button.rekuperacja_wietrzenie_teraz`. Naciśnięcie = wietrzenie na czas i z % ustawionymi w Strefach w sekcji **Wietrzenie z przycisku** (domyślnie 30 min, 90/90 %), potem samo wraca. Działa też, gdy nikogo nie ma, i ma pierwszeństwo przed wszystkim. Naciśnięcie w trakcie liczy czas od nowa, przerywasz przełącznikiem `input_boolean.rekuperacja_wietrzenie_przycisk` albo „przerwij” w karcie. Karta przycisku do wklejenia na pulpit:
+**Wietrzenie jako przycisk (v2.9–v2.11):** przy „Zapisz w HA” karta zakłada przełącznik **Wietrzenie** (`input_boolean.rekuperacja_wietrzenie_przycisk`) i przycisk `input_button.rekuperacja_wietrzenie_teraz`. Włączenie przełącznika albo naciśnięcie przycisku = wietrzenie na czas i z % ustawionymi w Strefach w sekcji **Wietrzenie z przycisku** (domyślnie 30 min, 90/90 %). Po tym czasie przełącznik **sam gaśnie** (sterownik sprawdza to co minutę, więc działa też po restarcie HA i po zapisie). Działa też, gdy nikogo nie ma, i ma pierwszeństwo przed wszystkim. Klik w trakcie przerywa. Karta do wklejenia na pulpit:
 
 ```yaml
 type: button
-entity: input_button.rekuperacja_wietrzenie_teraz
+entity: input_boolean.rekuperacja_wietrzenie_przycisk
 name: Wietrzenie
-icon: mdi:weather-windy
+icon: mdi:fan
+show_state: true
 tap_action:
-  action: perform-action
-  perform_action: input_button.press
-  target:
-    entity_id: input_button.rekuperacja_wietrzenie_teraz
+  action: toggle
 ```
 
 **Lewy pasek:** przy każdym otwarciu (konto administratora) karta sprawdza, czy w HA jest panel **Rekuperacja** (`/rekuperacja-nano`) z tą kartą na cały ekran, i jak go nie ma, zakłada go sama. Jak HA odmówi, na górze zakładki Rekuperator jest pasek z przyciskiem, błędem z HA i instrukcją do dodania ręcznie. Wyłączysz to opcją `sidebar: false`.
@@ -247,6 +245,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v2.11** – wietrzenia (przycisk, wjazd, wyjazd) gasną po czasie niezawodnie: sterownik co minutę liczy czas od włączenia zamiast licznika „for:”, który HA gubił przy przeładowaniu; przełącznik `input_boolean.rekuperacja_wietrzenie_przycisk` nazywa się w HA „Wietrzenie” i jest gotowym przyciskiem, który sam gaśnie; w karcie godzina końca wietrzenia.
 - **v2.10** – wietrzenie z przycisku ma własny czas i % (Strefy → Wietrzenie z przycisku), osobny przełącznik `input_boolean.rekuperacja_wietrzenie_przycisk`, działa też gdy nikogo nie ma i ma pierwszeństwo.
 - **v2.9** – encja-przycisk `input_button.rekuperacja_wietrzenie_teraz` (naciśnięcie = wietrzenie na ustawiony czas, ponowne = od nowa), w Sterowaniu przycisk „Wietrzenie teraz” z licznikiem minut i „przerwij”, gotowa karta przycisku w README.
 - **v2.8** – sezon lato/zima wg temperatury zewnętrznej (progi + czas trzymania, ręczne przełączenie), osobne harmonogramy lato i zima, osobne temperatury zadane na sezon, temperatura w każdym wpisie (domyślnie ręczna z sezonu), opcjonalnie SEZON w ESP.

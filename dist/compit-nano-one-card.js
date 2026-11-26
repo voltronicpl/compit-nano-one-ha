@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v2.10
+ * compit-nano-one-card  v2.11
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -21,7 +21,7 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v2.10';
+const VERSION = 'v2.11';
 // v2.4: Leaflet z unpkg jako zapas, gdy mapa HA (ha-map) nie wstanie
 // v2.6: kilka CDN po kolei, podklad OpenStreetMap bez klucza API
 const LEAFLET_CDN = ['https://unpkg.com/leaflet@1.9.4/dist/', 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/'];
@@ -905,7 +905,8 @@ class CompitNanoOneCard extends HTMLElement {
     const min = this._draft ? Number(this._draft.btn.min) || 0 : 0;
     const left = on && min ? Math.max(0, Math.ceil(min - (Date.now() - new Date(bb.last_changed)) / 60000)) : null;
     if (on && left !== null && !this._wietTick) this._wietTick = setTimeout(() => { this._wietTick = null; this._schedule(); }, 30000);
-    return `<div class="row"><button class="opt ${on ? 'on' : ''}" data-wnow>${ico('wind')} Wietrzenie teraz${on ? ` – trwa${left !== null ? ', zostało ' + left + ' min' : ''}` : ''}</button>
+    const end = on && min ? new Date(new Date(bb.last_changed).getTime() + min * 60000) : null;
+    return `<div class="row"><button class="opt ${on ? 'on' : ''}" data-wnow>${ico('wind')} Wietrzenie teraz${on ? ` – trwa${left !== null ? ', zostało ' + left + ' min (do ' + pad2(end.getHours()) + ':' + pad2(end.getMinutes()) + ')' : ''}` : ''}</button>
       ${on ? '<button class="mini" data-wstop>przerwij</button>' : ''}</div>`;
   }
 
@@ -1306,10 +1307,8 @@ class CompitNanoOneCard extends HTMLElement {
       { platform: 'time_pattern', minutes: '/1' },
       { platform: 'homeassistant', event: 'start' },
       { platform: 'state', entity_id: WIET_BOOL },
-      { platform: 'state', entity_id: WIET_BOOL, to: 'on', for: { minutes: Math.max(1, Number(c.wiet.min) || 15) }, id: 'wiet_off' },
       { platform: 'state', entity_id: WIET_BTN, id: 'wiet_btn' },
       { platform: 'state', entity_id: BTN_BOOL },
-      { platform: 'state', entity_id: BTN_BOOL, to: 'on', for: { minutes: Math.max(1, Number(c.btn.min) || 30) }, id: 'btn_off' },
     ];
     if (ruleEnts.length) trig.push({ platform: 'state', entity_id: ruleEnts });
     const trgEnts = [...new Set(this._trgEnts(c.trg.le).concat(this._trgEnts(c.trg.we)))];
@@ -1325,7 +1324,6 @@ class CompitNanoOneCard extends HTMLElement {
     const wyjOn = !!(c.wyj.on && (Number(c.wyj.min) || 0) > 0);
     if (wyjOn) {
       trig.push({ platform: 'state', entity_id: WYJ_BOOL });
-      trig.push({ platform: 'state', entity_id: WYJ_BOOL, to: 'on', for: { minutes: Math.max(1, Number(c.wyj.min) || 10) }, id: 'wyj_off' });
     }
     if (c.phones.length && c.z[0].on) {
       trig.push({ platform: 'template', id: 'wjazd1', value_template: this._countTpl(0) + '{{ ns.n > 0 }}' });
@@ -1338,11 +1336,8 @@ class CompitNanoOneCard extends HTMLElement {
     const yoff = { service: 'input_boolean.turn_off', target: { entity_id: WYJ_BOOL } };
     // v2.9: przycisk - wylacz i wlacz przelacznik, zeby czas wietrzenia liczyl sie od nowa
     const ch = [{ conditions: [{ condition: 'trigger', id: 'wiet_btn' }, { condition: 'template', value_template: "{{ trigger.from_state is not none and trigger.to_state is not none and trigger.to_state.state not in ['unknown', 'unavailable'] }}" }], sequence: [{ service: 'input_boolean.turn_off', target: { entity_id: BTN_BOOL } }, { service: 'input_boolean.turn_on', target: { entity_id: BTN_BOOL } }] },
-      { conditions: [{ condition: 'trigger', id: 'btn_off' }], sequence: [{ service: 'input_boolean.turn_off', target: { entity_id: BTN_BOOL } }] },
-      { conditions: [{ condition: 'trigger', id: 'wiet_off' }], sequence: [boff] },
       { conditions: [{ condition: 'trigger', id: 'wyjazd' }], sequence: wyjOn ? [boff, yon] : [boff] }];
     if (wyjOn) {
-      ch.push({ conditions: [{ condition: 'trigger', id: 'wyj_off' }], sequence: [yoff] });
       ch.push({ conditions: [{ condition: 'trigger', id: 'wjazd1' }, { condition: 'state', entity_id: WYJ_BOOL, state: 'on' }], sequence: [yoff] });
     }
     if (sezOn) {
@@ -1363,8 +1358,17 @@ class CompitNanoOneCard extends HTMLElement {
     if (c.z[0].wiet && (Number(c.wiet.min) || 0) > 0) ch.push({ conditions: [{ condition: 'trigger', id: 'wjazd1' }], sequence: [bon] });
     if (c.z[1].wiet && (Number(c.wiet.min) || 0) > 0) ch.push({ conditions: [{ condition: 'trigger', id: 'wjazd2' }], sequence: [bon] });
     const ifDo = (cond, seq) => ({ if: [{ condition: 'template', value_template: cond }], then: seq });
+    // v2.11: wylaczanie wietrzen po czasie liczone co minute z last_changed przelacznika
+    // (licznik "for:" HA gubil przy kazdym przeladowaniu automatyki / restarcie)
+    const expire = [[BTN_BOOL, c.btn.min, 30], [WIET_BOOL, c.wiet.min, 15]].concat(wyjOn ? [[WYJ_BOOL, c.wyj.min, 10]] : [])
+      .map(([e, m, d]) => {
+        const sec = Math.max(1, Number(String(m).replace(',', '.')) || d) * 60;
+        return { if: [{ condition: 'template', value_template: `{{ is_state('${e}', 'on') and (as_timestamp(now()) - as_timestamp(states.${e}.last_changed, 0)) >= ${sec - 5} }}` }],
+          then: [{ service: 'input_boolean.turn_off', target: { entity_id: e } }] };
+      });
     const action = [
       ...ch.map((x) => ({ if: x.conditions, then: x.sequence })),
+      ...expire,
       { variables: { t: this._ctlTpl(W) } },
       { condition: 'template', value_template: '{{ t is mapping }}' },
       { variables: {
@@ -1429,12 +1433,18 @@ class CompitNanoOneCard extends HTMLElement {
   }
 
   async _ensureBtnBool() {
-    if (this._hass.states[BTN_BOOL]) return;
+    if (this._hass.states[BTN_BOOL]) {
+      const a = this._hass.states[BTN_BOOL].attributes;
+      if (a.friendly_name !== 'Wietrzenie') { try { await this._hass.callWS({ type: 'input_boolean/update', input_boolean_id: BTN_BOOL.split('.')[1], name: 'Wietrzenie', icon: 'mdi:fan' }); } catch (e) { /* bez zmiany nazwy */ } }
+      return;
+    }
     let list = [];
     try { list = await this._hass.callWS({ type: 'input_boolean/list' }) || []; } catch (e) { list = []; }
     if (!list.some((x) => x.id === BTN_BOOL.split('.')[1])) {
-      await this._hass.callWS({ type: 'input_boolean/create', name: 'Rekuperacja wietrzenie przycisk', icon: 'mdi:gesture-tap-button' });
+      const it = await this._hass.callWS({ type: 'input_boolean/create', name: 'Rekuperacja wietrzenie przycisk', icon: 'mdi:fan' });
       this._pushLog({ t: new Date(), e: 'karta', s: 'Dodano przełącznik ' + BTN_BOOL });
+      // v2.11: ID zostaje rekuperacja_wietrzenie_przycisk, w HA widac krotko "Wietrzenie"
+      try { await this._hass.callWS({ type: 'input_boolean/update', input_boolean_id: (it && it.id) || BTN_BOOL.split('.')[1], name: 'Wietrzenie', icon: 'mdi:fan' }); } catch (e) { /* zostaje dluga nazwa */ }
     }
   }
 
