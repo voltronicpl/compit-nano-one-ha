@@ -70,7 +70,7 @@ Stare automatyki z v1.9–v2.2 (`compit_rekuperacja_harmonogram`, `_strefa_1`, `
 
 **Strefy:** dowolna liczba telefonów (`device_tracker` z aplikacji HA albo `person`, liczy się GPS), okręgi na mapie HA. Środek przeciągasz kropką, promień uchwytem na krawędzi, albo klikasz w mapę. Wjazd pierwszego telefonu do strefy (z zaznaczonym wietrzeniem) włącza przełącznik wietrzenia. Telefon, który nie raportował dłużej niż „Nieaktualny po” (domyślnie 30 min), się nie liczy. 0 wyłącza to sprawdzanie. Odległości liczone w km, więc HA musi mieć system metryczny.
 
-**Wietrzenie jako przycisk (v2.9):** przy „Zapisz w HA” karta zakłada też `input_button.rekuperacja_wietrzenie_teraz`. Naciśnięcie = wietrzenie na ustawiony czas z ustawionymi %, potem samo wraca. Naciśnięcie w trakcie liczy czas od nowa, przerywasz przełącznikiem `input_boolean.rekuperacja_wietrzenie`. Karta przycisku do wklejenia na pulpit:
+**Wietrzenie jako przycisk (v2.9):** przy „Zapisz w HA” karta zakłada też `input_button.rekuperacja_wietrzenie_teraz`. Naciśnięcie = wietrzenie na czas i z % ustawionymi w Strefach w sekcji **Wietrzenie z przycisku** (domyślnie 30 min, 90/90 %), potem samo wraca. Działa też, gdy nikogo nie ma, i ma pierwszeństwo przed wszystkim. Naciśnięcie w trakcie liczy czas od nowa, przerywasz przełącznikiem `input_boolean.rekuperacja_wietrzenie_przycisk` albo „przerwij” w karcie. Karta przycisku do wklejenia na pulpit:
 
 ```yaml
 type: button
@@ -247,6 +247,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v2.10** – wietrzenie z przycisku ma własny czas i % (Strefy → Wietrzenie z przycisku), osobny przełącznik `input_boolean.rekuperacja_wietrzenie_przycisk`, działa też gdy nikogo nie ma i ma pierwszeństwo.
 - **v2.9** – encja-przycisk `input_button.rekuperacja_wietrzenie_teraz` (naciśnięcie = wietrzenie na ustawiony czas, ponowne = od nowa), w Sterowaniu przycisk „Wietrzenie teraz” z licznikiem minut i „przerwij”, gotowa karta przycisku w README.
 - **v2.8** – sezon lato/zima wg temperatury zewnętrznej (progi + czas trzymania, ręczne przełączenie), osobne harmonogramy lato i zima, osobne temperatury zadane na sezon, temperatura w każdym wpisie (domyślnie ręczna z sezonu), opcjonalnie SEZON w ESP.
 - **v2.7** – Leaflet (licencja BSD-2) wbudowany w plik karty, więc mapa nie zależy od unpkg/jsdelivr; CDN zostaje tylko jako zapas; karta nie nadpisuje globalnego `window.L`.
