@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v2.0
+ * compit-nano-one-card  v2.1
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -19,7 +19,7 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v2.0';
+const VERSION = 'v2.1';
 // v1.9: automatyki i strefy tworzone przez karte, panel w pasku bocznym
 const AUTO_IDS = ['compit_rekuperacja_harmonogram', 'compit_rekuperacja_strefa_1', 'compit_rekuperacja_strefa_2'];
 const LS_CFG = 'compit-nano-one-plan';
@@ -261,6 +261,7 @@ class CompitNanoOneCard extends HTMLElement {
   }
 
   connectedCallback() {
+    if (this._hass) this._animStart();
     if (this._hookedPtr) return;
     this._hookedPtr = true;
     this.shadowRoot.addEventListener('pointerdown', () => { this._holding = true; });
@@ -556,6 +557,7 @@ class CompitNanoOneCard extends HTMLElement {
       this._render();
     }));
     if (this._tab === 'harmonogram' || this._tab === 'strefy') { this._loadCfg(); this._wirePlan(); }
+    this._animStart();
     const body = this.shadowRoot.querySelector('.body');
     if (body) body.scrollTop = sc;
   }
@@ -584,6 +586,39 @@ class CompitNanoOneCard extends HTMLElement {
     if (wa && !BAD.includes(wa.state)) return wa.state === 'on';
     const f = num(this._st('went_nawiew'));
     return f !== null && f > 0;
+  }
+
+  // v2.1: % wentylatora (0-100) dla animacji; bez % a wentylatory pracuja = 50
+  _animTarget(k) {
+    if (!this._hass) return 0;
+    const v = num(this._st(k === 'w' ? 'went_wywiew' : 'went_nawiew'));
+    if (v === null) return this._running() ? 50 : 0;
+    return Math.max(0, Math.min(100, v));
+  }
+
+  // v2.1: jedna petla animacji niezalezna od przerysowan - zmiana % plynnie przyspiesza / zwalnia
+  _animStart() {
+    if (this._raf) return;
+    const a = this._anim || (this._anim = { n: { s: 0, ang: 0, off: 0 }, w: { s: 0, ang: 0, off: 0 } });
+    let last = performance.now();
+    const step = (t) => {
+      this._raf = null;
+      if (!this.isConnected) return;
+      const dt = Math.min(0.1, Math.max(0, (t - last) / 1000)); last = t;
+      const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      for (const k of ['n', 'w']) {
+        const o = a[k], tg = reduce ? 0 : this._animTarget(k);
+        o.s += (tg - o.s) * Math.min(1, dt * 1.5);
+        if (Math.abs(tg - o.s) < 0.2) o.s = tg;
+        o.ang = (o.ang + o.s / 100 * 430 * dt) % 360;      // 100 % = ok. 1,2 obrotu/s
+        o.off = (o.off - o.s / 100 * 40 * dt) % 18;        // 100 % = 40 px/s
+      }
+      const R = this.shadowRoot;
+      R.querySelectorAll('[data-fan]').forEach((el) => el.setAttribute('transform', 'rotate(' + a[el.dataset.fan].ang.toFixed(1) + ')'));
+      R.querySelectorAll('[data-flow]').forEach((el) => { const o = a[el.dataset.flow]; el.style.strokeDashoffset = o.off.toFixed(1); el.style.opacity = o.s > 0.5 ? '.45' : '0'; });
+      this._raf = requestAnimationFrame(step);
+    };
+    this._raf = requestAnimationFrame(step);
   }
 
   // zapis dozwolony? (gdy jest przelacznik "Nadawanie iNext", musi byc WL)
@@ -690,8 +725,9 @@ class CompitNanoOneCard extends HTMLElement {
       ? 'M182 74 H214 C236 74 236 30 262 30 H378 C404 30 404 74 426 74 H458'
       : 'M182 74 H214 C258 74 262 168 320 168 C378 168 382 74 426 74 H458';
     const warm = 'M182 226 H214 C258 226 262 132 320 132 C378 132 382 226 426 226 H458';
-    const fan = (x, y) => `<g transform="translate(${x} ${y})"><circle r="25" class="hfan"/>
-      <g class="${run ? 'spin' : ''}" style="animation-duration:1.4s"><path d="M0 -17 C8 -15 7 -4 0 0 C-7 -4 -8 -15 0 -17Z M14.7 8.5 C10.5 15.5 1 11 0 0 C10 -1 17 3 14.7 8.5Z M-14.7 8.5 C-17 3 -10 -1 0 0 C-1 11 -10.5 15.5 -14.7 8.5Z" class="hblade"/></g><circle r="4" class="hhub"/></g>`;
+    // v2.1: predkosc wiatraczkow i przeplywu liczy _animStart() z % wentylatorow (n = nawiew, w = wywiew)
+    const fan = (x, y, k) => `<g transform="translate(${x} ${y})"><circle r="25" class="hfan"/>
+      <g data-fan="${k}" transform="rotate(${this._anim ? this._anim[k].ang.toFixed(1) : 0})"><path d="M0 -17 C8 -15 7 -4 0 0 C-7 -4 -8 -15 0 -17Z M14.7 8.5 C10.5 15.5 1 11 0 0 C10 -1 17 3 14.7 8.5Z M-14.7 8.5 C-17 3 -10 -1 0 0 C-1 11 -10.5 15.5 -14.7 8.5Z" class="hblade"/></g><circle r="4" class="hhub"/></g>`;
     const arrows = (x, y, cls) => `<text x="${x}" y="${y + 6}" text-anchor="middle" class="harr ${cls} ${run ? 'blink' : ''}">›››</text>`;
     return `
       <svg viewBox="0 0 640 300" class="hero" role="img" aria-label="Schemat rekuperatora">
@@ -701,12 +737,12 @@ class CompitNanoOneCard extends HTMLElement {
         </defs>
         <rect x="212" y="12" width="216" height="270" rx="18" class="hunit"/>
         <rect x="290" y="12" width="60" height="26" rx="4" class="hcap"/>
-        ${fan(262, 58)}${fan(378, 58)}
+        ${fan(262, 58, 'w')}${fan(378, 58, 'n')}
         <polygon points="${oct}" class="hoct ${bypassOn ? 'byp' : ''}"/>
         <polygon points="${oct}" fill="url(#hatch)" class="${bypassOn ? 'byp' : ''}"/>
         <path d="${warm}" class="hs warm" filter="url(#glow)"/>
         <path d="${cold}" class="hs cold" filter="url(#glow)"/>
-        ${run ? `<path d="${warm}" class="hflow"/><path d="${cold}" class="hflow"/>` : ''}
+        <path d="${warm}" class="hflow" data-flow="w" style="opacity:0"/><path d="${cold}" class="hflow" data-flow="n" style="opacity:0"/>
         ${arrows(198, 74, 'cold')}${arrows(442, 74, 'cold')}${arrows(198, 226, 'warm')}${arrows(442, 226, 'warm')}
         ${bypassOn ? '<text x="320" y="22" text-anchor="middle" class="hbyp">BYPASS</text>' : ''}
         ${tile('t_czerpnia', 8, 35, 'snow', 'cold', 'CZERPNIA')}
@@ -728,7 +764,7 @@ class CompitNanoOneCard extends HTMLElement {
     return `<div class="gauge click" data-pop="${can ? gp : 'missing'}">
       <svg viewBox="0 0 100 100" class="ring"><circle cx="50" cy="50" r="38" class="rbg"/>
         <circle cx="50" cy="50" r="38" class="rfg" stroke-dasharray="${(C * p / 100).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 50 50)"/>
-        <g transform="translate(50 50)"><g class="${run ? 'spin' : ''}" style="animation-duration:2s"><path d="M0 -16 C7 -14 6 -4 0 0 C-6 -4 -7 -14 0 -16Z M13.9 8 C10 14.5 1 10.5 0 0 C9.5 -1 16 3 13.9 8Z M-13.9 8 C-16 3 -9.5 -1 0 0 C-1 10.5 -10 14.5 -13.9 8Z" class="rblade"/></g></g></svg>
+        <g transform="translate(50 50)"><g data-fan="n" transform="rotate(${this._anim ? this._anim.n.ang.toFixed(1) : 0})"><path d="M0 -16 C7 -14 6 -4 0 0 C-6 -4 -7 -14 0 -16Z M13.9 8 C10 14.5 1 10.5 0 0 C9.5 -1 16 3 13.9 8Z M-13.9 8 C-16 3 -9.5 -1 0 0 C-1 10.5 -10 14.5 -13.9 8Z" class="rblade"/></g></g></svg>
       <span class="gsep"></span>
       <div><div class="glbl">${esc(bl)}</div><div class="gval">${pct === null ? '—' : Math.round(pct) + '%'}</div>
         ${bc && !BAD.includes(bc.state) ? `<div class="gsub">centrala: bieg ${esc(bc.state)}${num(this._st('went_wywiew')) !== null ? ' · wywiew ' + Math.round(num(this._st('went_wywiew'))) + '%' : ''}</div>` : ''}
@@ -1721,7 +1757,7 @@ const CSS = `
   .hoct.byp, polygon.byp { opacity:.35; }
   .hs { fill:none; stroke-width:16; stroke-linecap:round; stroke-linejoin:round; opacity:.85; }
   .hs.cold { stroke:#1e9bff; } .hs.warm { stroke:#ff9a2a; }
-  .hflow { fill:none; stroke:#fff; stroke-width:3; stroke-linecap:round; stroke-dasharray:2 16; opacity:.45; animation:flow 1.2s linear infinite; }
+  .hflow { fill:none; stroke:#fff; stroke-width:3; stroke-linecap:round; stroke-dasharray:2 16; opacity:.45; }
   @keyframes flow { to { stroke-dashoffset:-18; } }
   .harr { font-size:20px; font-weight:900; fill:#fff; opacity:.9; }
   .blink { animation:blink 1.6s ease-in-out infinite; }
