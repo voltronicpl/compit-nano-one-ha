@@ -46,23 +46,29 @@ Ze starszym YAML-em (v1.4) karta dalej działa na `ustaw_bieg`, `ustaw_program`,
 
 **Bez szukania blokady:** przełącznik `switch.<prefix>_sterowanie_z_ha_inext` („Sterowanie z HA (iNext)”) karta włącza sama przy pierwszej zmianie, czeka, aż ESP potwierdzi, i dopiero wysyła wartość. Po każdej zmianie pokazuje „✓ wysłane” albo „✗ błąd”. Gdy ESP nie ma encji sterujących, karta pokazuje czerwony pasek „Wgraj na ESP YAML v1.6” z listą brakujących encji, a gdy ESP jest offline, mówi to wprost.
 
-## Harmonogram i strefy (v1.9)
+## Harmonogram, strefy, reguły (v2.3)
 
-Karta tylko ustawia. Całą robotę robi Home Assistant, więc działa też, gdy nikt nie ma otwartej karty. Po kliknięciu **Zapisz w HA** (konto administratora) karta tworzy albo aktualizuje:
+Karta tylko ustawia. Całą robotę robi Home Assistant, więc działa też bez otwartej karty. Po kliknięciu **Zapisz w HA** (konto administratora) karta tworzy albo aktualizuje:
 
-- automatykę `Rekuperacja – harmonogram` (`compit_rekuperacja_harmonogram`),
-- strefy `zone.rekuperacja_1` i `zone.rekuperacja_2` (pasywne, więc nie psują stanu „w domu” telefonów),
-- automatyki `Rekuperacja – strefa 1` / `strefa 2` (`compit_rekuperacja_strefa_1/_2`).
+- automatykę **Rekuperacja – sterownik** (`compit_rekuperacja_sterownik`),
+- strefy `zone.rekuperacja_1` i `zone.rekuperacja_2` (pasywne, nie psują stanu „w domu” telefonów),
+- przełącznik **`input_boolean.rekuperacja_wietrzenie`**, który możesz wstawić na dowolną swoją kartę.
 
-Ustawienia karty są zapisane w samych automatykach, więc w każdej przeglądarce widać to samo. Automatyk nie edytuj ręcznie, bo karta nadpisze je przy następnym zapisie. Przycisk **Usuń wszystko z HA** kasuje te automatyki i strefy.
+Stare automatyki z v1.9–v2.2 (`compit_rekuperacja_harmonogram`, `_strefa_1`, `_strefa_2`) karta kasuje przy zapisie, a ich ustawienia przenosi. Ustawienia karty są zapisane w sterowniku, więc w każdej przeglądarce widać to samo. Sterownika nie edytuj ręcznie, bo karta nadpisze go przy następnym zapisie. **Usuń wszystko z HA** kasuje sterownik, strefy i przełącznik.
 
-**Harmonogram:** wpisy z dniami tygodnia (Pn…Nd, skróty Pn–Pt / Weekend / Codziennie), godziną, trybem z „Ustaw tryb”, opcjonalnie temperaturą ręczną i % nawiewu / wywiewu dla biegu z trybu.
+**Jak sterownik decyduje** (co minutę i przy każdej zmianie warunku, zapisuje do Nano tylko to, co się różni):
 
-**Strefy:** dowolna liczba telefonów (`device_tracker` z aplikacji HA albo `person`, liczy się GPS), okręgi na mapie (klik w mapę ustawia środek, promień w metrach). Strefa 1 jest domyślnie włączona, strefa 2 to opcja.
-- **Wjazd** (pierwszy świeży telefon w strefie): wietrzenie przez X minut z ustawionym % nawiewu / wywiewu, potem tryb normalny (i % biegu).
-- **Wyjazd** (ostatni telefon wyszedł, po 1 min): HA przywraca % biegów sprzed wjazdu, potem ustawia tryb wyjazdu (i % biegu, jeśli wpisane).
-- Telefon, który nie raportował dłużej niż „Nieaktualny po” (domyślnie 30 min), się nie liczy. 0 wyłącza to sprawdzanie. Jak telefon w domu długo milczy i HA przełącza tryb bez powodu, daj 0.
-- Wietrzenie wymaga YAML z opcją „Wietrzenie” w „Ustaw tryb” albo przełącznikiem `switch.<prefix>_wietrzenie`. Bez tego wjazd od razu ustawia tryb normalny. Po wgraniu nowego YAML kliknij Zapisz jeszcze raz.
+1. nikt nie jest w strefie 1 → tryb wyjazdu (albo tryb strefy 2, gdy ktoś jest w strefie 2),
+2. przełącznik wietrzenia WŁ. → wietrzenie z ustawionymi % przez X min (potem sam się wyłącza),
+3. reguła (pierwsza pasująca) → % nawiewu / wywiewu, osobno dzień i noc,
+4. cykl dzienny / nocny → „co X h na Y min” z ustawionymi %,
+5. harmonogram tygodniowy → tryb i % z wykresu na tę godzinę.
+
+**Harmonogram:** wykres Pn–Nd × 0–24 h z kolorowymi blokami trybów, pasem nocy, znacznikami cykli i kreską „teraz”. Klik w blok = edycja (dni, godzina, tryb, temperatura, %), dwuklik albo klik w pusty pasek = nowy wpis, przeciąganie lewej krawędzi bloku = zmiana godziny co 15 min. Lista wpisów jest zwinięta pod wykresem. Puste % we wpisie = **domyślne % biegu** z tabelki.
+
+**Reguły:** warunki z dowolnych encji HA (włączone / wyłączone / większe / mniejsze / równe), wszystkie naraz, np. `light.lazienka` włączone i przepływ wody > 0. Działają tylko, gdy ktoś jest w strefie 1. „Trzymaj jeszcze N min” trzyma regułę po zniknięciu warunku. Reguły, cykle i wietrzenie (bez wietrzenia w YAML) jadą na wybranym biegu (domyślnie 3) z własnymi %.
+
+**Strefy:** dowolna liczba telefonów (`device_tracker` z aplikacji HA albo `person`, liczy się GPS), okręgi na mapie HA. Środek przeciągasz kropką, promień uchwytem na krawędzi, albo klikasz w mapę. Wjazd pierwszego telefonu do strefy (z zaznaczonym wietrzeniem) włącza przełącznik wietrzenia. Telefon, który nie raportował dłużej niż „Nieaktualny po” (domyślnie 30 min), się nie liczy. 0 wyłącza to sprawdzanie. Odległości liczone w km, więc HA musi mieć system metryczny.
 
 **Lewy pasek:** przy każdym otwarciu (konto administratora) karta sprawdza, czy w HA jest panel **Rekuperacja** (`/rekuperacja-nano`) z tą kartą na cały ekran, i jak go nie ma, zakłada go sama. Jak HA odmówi, na górze zakładki Rekuperator jest pasek z przyciskiem, błędem z HA i instrukcją do dodania ręcznie. Wyłączysz to opcją `sidebar: false`.
 
@@ -209,6 +215,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v2.3** – jeden sterownik w HA zamiast 3 automatyk: harmonogram tylko gdy ktoś w strefie, noc, reguły z encji HA (np. łazienka), cykle dzień/noc, przełącznik `input_boolean.rekuperacja_wietrzenie`, linia „teraz steruje”; harmonogram jako wykres tygodniowy z przeciąganiem; mapa nie wraca na środek, przeciąganie środka i promienia; na szerokim ekranie mały schemat i 2–3 kolumny.
 - **v2.2** – panel w lewym pasku sprawdzany przy każdym otwarciu, pasek z przyciskiem „Dodaj Rekuperację do lewego paska”, błędem z HA i instrukcją ręczną; mapa w Strefach z HA (ha-map) zamiast unpkg / OpenStreetMap.
 - **v2.1** – wiatraczki i przepływ kręcą się z prędkością wentylatorów: nawiew z `wentylator_nawiewu`, wywiew z `wentylator_wywiewu` (0 % = stoi), zmiana % płynnie przyspiesza / zwalnia, animacja nie zaczyna się od nowa przy odświeżeniu karty.
 - **v2.0** – v1.8 (kafel Na zewnątrz z pompy BT1) + v1.9 (pasek boczny, Harmonogram, Strefy) razem w jednej wersji.

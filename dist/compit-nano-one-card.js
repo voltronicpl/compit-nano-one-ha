@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v2.2
+ * compit-nano-one-card  v2.3
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -19,9 +19,11 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v2.2';
+const VERSION = 'v2.3';
 // v1.9: automatyki i strefy tworzone przez karte, panel w pasku bocznym
-const AUTO_IDS = ['compit_rekuperacja_harmonogram', 'compit_rekuperacja_strefa_1', 'compit_rekuperacja_strefa_2'];
+const AUTO_IDS = ['compit_rekuperacja_sterownik'];
+const OLD_IDS = ['compit_rekuperacja_harmonogram', 'compit_rekuperacja_strefa_1', 'compit_rekuperacja_strefa_2']; // v1.9-v2.2, kasowane przy zapisie
+const WIET_BOOL = 'input_boolean.rekuperacja_wietrzenie';
 const LS_CFG = 'compit-nano-one-plan';
 const SB_URL = 'rekuperacja-nano';
 const DAYS = [['mon', 'Pn'], ['tue', 'Wt'], ['wed', 'Śr'], ['thu', 'Cz'], ['fri', 'Pt'], ['sat', 'So'], ['sun', 'Nd']];
@@ -418,18 +420,17 @@ class CompitNanoOneCard extends HTMLElement {
     }
     if (first || this._tab === 'diagnostyka') this._loadHistory();
     if (first) setTimeout(() => this._checkSidebar(true), 1500);
-    // v1.9: wyzwolenia automatyk karty do logu
+    // v2.3: zmiana tego, co steruje (wg lustra logiki sterownika) do logu
     const autos = this._autoEnts();
-    for (const id of autos) {
-      const lt = hass.states[id].attributes.last_triggered || null;
-      const k = 'auto:' + id;
-      if (this._last[k] !== undefined && lt && lt !== this._last[k]) this._pushLog({ t: new Date(lt), e: 'automatyka', s: this._autoLabel(hass.states[id]) + ' – wyzwolona' });
-      this._last[k] = lt;
-    }
+    if (this._draft) {
+      const nc = this._nowCtl(), src = nc ? nc.src : '';
+      if (this._lastSrc !== undefined && src !== this._lastSrc) this._pushLog({ t: new Date(), e: 'sterownik', s: 'teraz steruje: ' + src + (nc && nc.tryb ? ' → ' + nc.tryb : '') });
+      this._lastSrc = src;
+    } else if (autos.length && !this._cfgLoaded) this._loadCfg();
     // v1.4: HA podaje nowe hass przy KAZDEJ zmianie dowolnej encji w domu. Przerysowuj tylko,
     // gdy zmienila sie ktoras encja z prefiksem - inaczej animacje skacza, a klik potrafi przepasc.
     const zid = this._zewnId();   // v1.8: zmiana BT1 z pompy tez przerysowuje
-    const ids = this._idx().concat(zid ? [zid] : [], autos, this._tab === 'strefy' && this._draft ? this._draft.phones : []);
+    const ids = this._idx().concat(zid ? [zid] : [], autos, [WIET_BOOL], (this._tab === 'strefy' || this._tab === 'harmonogram') && this._draft ? this._draft.phones : []);
     const changed = first || !this._seen || ids.length !== this._seen.size || ids.some((id) => this._seen.get(id) !== hass.states[id]);
     if (!changed) return;
     this._seen = new Map(ids.map((id) => [id, hass.states[id]]));
@@ -555,6 +556,9 @@ class CompitNanoOneCard extends HTMLElement {
       this._render();
     }));
     if (this._tab === 'harmonogram' || this._tab === 'strefy') { this._loadCfg(); this._wirePlan(); }
+    this.shadowRoot.querySelectorAll('[data-wbool2]').forEach((b) => b.addEventListener('click', () => {
+      const s = this._hass.states[WIET_BOOL]; if (s) this._hass.callService('input_boolean', s.state === 'on' ? 'turn_off' : 'turn_on', { entity_id: WIET_BOOL });
+    }));
     this.shadowRoot.querySelectorAll('[data-sidebar]').forEach((b) => b.addEventListener('click', () => this._checkSidebar(true)));
     this._animStart();
     const body = this.shadowRoot.querySelector('.body');
@@ -833,7 +837,8 @@ class CompitNanoOneCard extends HTMLElement {
       ${this._offlineBox()}
       ${this._missingBox()}
       ${lock}
-      ${wiet ? `<div class="row"><button class="opt ${wiet.state === 'on' ? 'on' : ''}" data-wiet ${can ? '' : 'disabled'}>${ico('wind')} Wietrzenie: ${wiet.state === 'on' ? 'WŁ.' : 'WYŁ.'}</button></div>` : ''}
+      ${wiet && wiet.entity_id.startsWith('switch.') ? `<div class="row"><button class="opt ${wiet.state === 'on' ? 'on' : ''}" data-wiet ${can ? '' : 'disabled'}>${ico('wind')} Wietrzenie: ${wiet.state === 'on' ? 'WŁ.' : 'WYŁ.'}</button></div>` : ''}
+      ${this._hass.states[WIET_BOOL] ? `<div class="row"><button class="opt ${this._hass.states[WIET_BOOL].state === 'on' ? 'on' : ''}" data-wbool2>${ico('wind')} Wietrzenie (HA): ${this._hass.states[WIET_BOOL].state === 'on' ? 'WŁ.' : 'WYŁ.'}</button></div>` : ''}
       ${temps ? `<div class="sublbl">Temperatury zadane</div><div class="nwrap">${temps}</div>` : ''}
       ${pcts ? `<div class="sublbl">Biegi % (nawiew / wywiew)</div><table class="ptab"><tr><th></th><th>Nawiew</th><th>Wywiew</th></tr>${pcts}</table>` : ''}
     </div>`;
@@ -902,16 +907,28 @@ class CompitNanoOneCard extends HTMLElement {
     this._render();
   }
 
-  // ================= v1.9: harmonogram, strefy, panel w pasku bocznym =================
-  // Karta tylko ustawia. Logika siedzi w HA: strefy zone.rekuperacja_1/_2 i automatyki
-  // compit_rekuperacja_harmonogram / _strefa_1 / _strefa_2 (dzialaja tez bez otwartej karty).
+  // ================= v2.3: sterownik w HA (harmonogram w strefie, noc, reguly, cykle, wietrzenie) =================
+  // Karta tylko ustawia. Robote robi jedna automatyka HA "Rekuperacja – sterownik" (compit_rekuperacja_sterownik),
+  // strefy zone.rekuperacja_1/_2 i przelacznik input_boolean.rekuperacja_wietrzenie - dzialaja bez otwartej karty.
+  // Co minute (i przy kazdej zmianie warunku) sterownik liczy, co ma byc teraz, i zapisuje tylko roznice:
+  //   nikt w strefie 1 -> tryb wyjazdu (albo tryb strefy 2) > wietrzenie > regula > cykl > harmonogram
   _isAdmin() { return !!(this._hass && this._hass.user && this._hass.user.is_admin); }
 
   _defCfg() {
     const h = (this._hass && this._hass.config) || {};
-    const z = (on, r) => ({ on, lat: h.latitude || 52.2297, lon: h.longitude || 21.0122, r, wm: 15, wpn: 80, wpw: 80,
-      ntryb: '', npn: '', npw: '', ltryb: '', lpn: '', lpw: '' });
-    return { v: 1, phones: [], stale: 30, sched: { on: true, slots: [] }, z: [z(true, 300), z(false, 2000)] };
+    const z = (on, r) => ({ on, lat: h.latitude || 52.2297, lon: h.longitude || 21.0122, r, wiet: true, ltryb: '', lpn: '', lpw: '' });
+    const base = {};
+    ['n1', 'w1', 'n2', 'w2', 'n3', 'w3'].forEach((k) => { const v = num(this._st('p_' + k)); base[k] = v === null ? '' : Math.round(v); });
+    return {
+      v: 2, phones: [], stale: 30,
+      sched: { on: true, slots: [] },
+      night: { from: '22:00', to: '06:00' },
+      base, boost: '3',
+      wiet: { min: 15, pn: 80, pw: 80 },
+      cyc: { day: { on: false, every: 3, dur: 20, pn: 80, pw: 80 }, night: { on: false, every: 2, dur: 15, pn: 60, pw: 60 } },
+      rules: [],
+      z: [z(true, 300), z(false, 2000)],
+    };
   }
 
   _mergeCfg(c) {
@@ -921,7 +938,22 @@ class CompitNanoOneCard extends HTMLElement {
     out.phones = Array.isArray(c.phones) ? c.phones.slice() : [];
     out.sched = Object.assign({}, d.sched, c.sched || {});
     out.sched.slots = (out.sched.slots || []).map((s) => Object.assign({ d: [], t: '06:00', tryb: '', temp: '', pn: '', pw: '' }, s, { d: (s.d || []).slice() }));
+    out.night = Object.assign({}, d.night, c.night || {});
+    out.base = Object.assign({}, d.base, c.base || {});
+    out.wiet = Object.assign({}, d.wiet, c.wiet || {});
+    out.cyc = { day: Object.assign({}, d.cyc.day, (c.cyc || {}).day || {}), night: Object.assign({}, d.cyc.night, (c.cyc || {}).night || {}) };
+    out.rules = (c.rules || []).map((r) => Object.assign({ name: 'Reguła', on: true, conds: [], dpn: 80, dpw: 80, npn: 60, npw: 60, hold: 10 }, r,
+      { conds: (r.conds || []).map((x) => Object.assign({ e: '', op: 'on', v: '' }, x)) }));
     out.z = [0, 1].map((i) => Object.assign({}, d.z[i], (c.z || [])[i] || {}));
+    // migracja z v1.9-v2.2: wietrzenie i "tryb normalny" byly w strefie 1
+    if (!c.v || c.v < 2) {
+      const z0 = (c.z || [])[0] || {};
+      if (z0.wm !== undefined) out.wiet = { min: Number(z0.wm) || 0, pn: z0.wpn !== undefined ? z0.wpn : 80, pw: z0.wpw !== undefined ? z0.wpw : 80 };
+      out.z.forEach((z, i) => { const o = (c.z || [])[i] || {}; z.wiet = o.wm === undefined ? true : Number(o.wm) > 0; });
+      if (!out.sched.slots.length && z0.ntryb) out.sched.slots = [{ d: DAYS.map((x) => x[0]), t: '00:00', tryb: z0.ntryb, temp: '', pn: z0.npn || '', pw: z0.npw || '' }];
+      out.v = 2;
+    }
+    out.z.forEach((z) => { delete z.wm; delete z.wpn; delete z.wpw; delete z.ntryb; delete z.npn; delete z.npw; });
     return out;
   }
 
@@ -930,7 +962,7 @@ class CompitNanoOneCard extends HTMLElement {
     this._cfgLoaded = true;
     let cfg = null;
     this._autoExists = {};
-    for (const id of AUTO_IDS) {
+    for (const id of AUTO_IDS.concat(OLD_IDS)) {
       try {
         const a = await this._hass.callApi('GET', 'config/automation/config/' + id);
         this._autoExists[id] = true;
@@ -942,99 +974,230 @@ class CompitNanoOneCard extends HTMLElement {
     this._schedule();
   }
 
-  // encje, do ktorych automatyki beda pisac (ustalane w chwili zapisu)
+  // encje, do ktorych sterownik pisze (ustalane w chwili zapisu)
   _wt() {
     const id = (k) => (this._st(k) ? this._id(k) : null);
     const sel = id('set_tryb') || id('set_bieg');
     const opts = sel ? (this._hass.states[sel].attributes.options || []) : [];
     const p = {};
     ['n1', 'w1', 'n2', 'w2', 'n3', 'w3', 'nw', 'ww'].forEach((k) => { p[k] = id('p_' + k); });
-    return { lock: id('nadawanie'), sel, opts, wietOpt: opts.find((o) => /wietrz/i.test(o)) || null, wietSw: id('sw_wietrz'), temp: id('t_reczna'), p };
+    const sw = id('sw_wietrz');
+    return { lock: id('nadawanie'), sel, opts, wietOpt: opts.find((o) => /wietrz/i.test(o)) || null,
+      wietSw: sw && sw.startsWith('switch.') ? sw : null, temp: id('t_reczna'), p };
   }
 
   _gearOf(opt) { const m = /bieg\s*(\d)/i.exec(opt || ''); return m ? m[1] : null; }
+  _gearOpt(W, g) { return W.opts.find((o) => this._gearOf(o) === String(g)) || null; }
+  _n(v) { const x = Number(String(v === undefined || v === null ? '' : v).replace(',', '.')); return v === '' || v === null || v === undefined || isNaN(x) ? null : x; }
+  _min(t) { const m = /^(\d{1,2}):(\d{2})/.exec(t || ''); return m ? Number(m[1]) * 60 + Number(m[2]) : 0; }
+  _hm(m) { m = ((m % 1440) + 1440) % 1440; return pad2(Math.floor(m / 60)) + ':' + pad2(m % 60); }
+
+  // cel: {src, tryb, n, w, pn, pw, tid, temp} - wszystko rozwiazane do ID encji
+  _tgt(W, src, tryb, pn, pw, temp) {
+    const c = this._draft, g = this._gearOf(tryb);
+    const t = { src, tryb: tryb || '', n: null, w: null, pn: null, pw: null, tid: null, temp: null };
+    if (g) {
+      t.n = W.p['n' + g]; t.w = W.p['w' + g];
+      t.pn = this._n(pn) !== null ? this._n(pn) : this._n(c.base['n' + g]);
+      t.pw = this._n(pw) !== null ? this._n(pw) : this._n(c.base['w' + g]);
+    }
+    if (this._n(temp) !== null && W.temp) { t.tid = W.temp; t.temp = this._n(temp); }
+    return t;
+  }
+
+  _boostTgt(W, src, pn, pw) { return this._tgt(W, src, this._gearOpt(W, this._draft.boost) || '', pn, pw); }
+
+  _wietTgt(W) {
+    const c = this._draft;
+    if (W.wietOpt) return { src: 'wietrzenie', tryb: W.wietOpt, n: W.p.nw, w: W.p.ww, pn: this._n(c.wiet.pn), pw: this._n(c.wiet.pw), tid: null, temp: null };
+    return this._boostTgt(W, 'wietrzenie', c.wiet.pn, c.wiet.pw);
+  }
+
+  // wpisy harmonogramu jako [minuta tygodnia (Pn 00:00 = 0), cel], posortowane
+  _schedEntries(W) {
+    const c = this._draft, out = [];
+    c.sched.slots.forEach((s) => {
+      if (!s.tryb && this._n(s.temp) === null) return;
+      s.d.forEach((d) => {
+        const di = DAYS.findIndex((x) => x[0] === d);
+        if (di >= 0) out.push([di * 1440 + this._min(s.t), this._tgt(W, 'harmonogram', s.tryb, s.pn, s.pw, s.temp)]);
+      });
+    });
+    return out.sort((a, b) => a[0] - b[0]);
+  }
+
+  _isNight(mins) {
+    const nf = this._min(this._draft.night.from), nt = this._min(this._draft.night.to);
+    return nf > nt ? (mins >= nf || mins < nt) : (mins >= nf && mins < nt);
+  }
+
+  _cycOn(cy, mins, anchor) {
+    const e = Math.round((this._n(cy.every) || 0) * 60), d = this._n(cy.dur) || 0;
+    return !!(cy.on && e > 0 && d > 0 && ((((mins - anchor) % 1440) + 1440) % 1440) % e < d);
+  }
+
+  _ruleConds(r) { return r.conds.filter((x) => x.e && /^[a-z_]+\.[a-z0-9_]+$/.test(x.e)); }
+
+  // ---- lustro logiki sterownika w karcie (do "teraz steruje" i podgladu) ----
+  _condNow(x, hold) {
+    const s = this._hass.states[x.e];
+    if (!s) return false;
+    const v = this._n(x.v);
+    const cur = x.op === 'on' ? s.state === 'on' : x.op === 'off' ? s.state === 'off'
+      : x.op === '=' ? s.state === String(x.v) : x.op === '>' ? (this._n(s.state) || 0) > (v || 0) : (this._n(s.state) || 0) < (v || 0);
+    return cur || (Date.now() - new Date(s.last_changed)) / 60000 < (this._n(hold) || 0);
+  }
+
+  _nowCtl() {
+    if (!this._draft || !this._hass) return null;
+    const c = this._draft, W = this._wt();
+    const cnt = [0, 1].map((i) => c.phones.filter((id) => this._phoneInfo(id).inZ[i]).length);
+    const home = !c.z[0].on || !c.phones.length || cnt[0] > 0;
+    const d = new Date(), mins = d.getHours() * 60 + d.getMinutes(), night = this._isNight(mins);
+    if (!home) {
+      if (c.z[1].on && cnt[1] > 0 && c.z[1].ltryb) return this._tgt(W, 'strefa 2', c.z[1].ltryb, c.z[1].lpn, c.z[1].lpw);
+      return c.z[0].ltryb ? this._tgt(W, 'wyjazd', c.z[0].ltryb, c.z[0].lpn, c.z[0].lpw) : { src: 'wyjazd (bez zmiany trybu)' };
+    }
+    const wb = this._hass.states[WIET_BOOL];
+    if (wb && wb.state === 'on') return this._wietTgt(W);
+    for (const r of c.rules) {
+      const cs = this._ruleConds(r);
+      if (r.on && cs.length && cs.every((x) => this._condNow(x, r.hold))) return this._boostTgt(W, 'reguła ' + r.name, night ? r.npn : r.dpn, night ? r.npw : r.dpw);
+    }
+    const nf = this._min(c.night.from), nt = this._min(c.night.to);
+    if (night && this._cycOn(c.cyc.night, mins, nf)) return this._boostTgt(W, 'cykl nocny', c.cyc.night.pn, c.cyc.night.pw);
+    if (!night && this._cycOn(c.cyc.day, mins, nt)) return this._boostTgt(W, 'cykl dzienny', c.cyc.day.pn, c.cyc.day.pw);
+    if (c.sched.on) {
+      const E = this._schedEntries(W);
+      if (E.length) {
+        const wm = ((d.getDay() + 6) % 7) * 1440 + mins;
+        let s = E[E.length - 1];
+        E.forEach((e) => { if (e[0] <= wm) s = e; });
+        return s[1];
+      }
+    }
+    return { src: 'nic (brak harmonogramu)' };
+  }
+
+  _tgtTxt(t) {
+    if (!t) return '—';
+    const p = t.pn !== null && t.pn !== undefined ? ` · ${t.pn}/${t.pw} %` : '';
+    return `<b>${esc(t.src)}</b>${t.tryb ? ' → ' + esc(t.tryb) : ''}${p}${t.temp !== null && t.temp !== undefined ? ' · ' + t.temp + ' °C' : ''}`;
+  }
+
+  // ---- generowanie automatyki sterownika ----
+  _jl(x) { return JSON.stringify(x).replace(/\bnull\b/g, 'none'); }
+
+  _countTpl(zi) {
+    const c = this._draft, z = c.z[zi], st = Math.max(0, Number(c.stale) || 0);
+    return `{% set ns = namespace(n=0) %}{% for s in expand(${this._jl(c.phones)}) %}{% set la = s.attributes.latitude %}{% set lo = s.attributes.longitude %}`
+      + `{% if la is number and lo is number and (${st} == 0 or (as_timestamp(now()) - as_timestamp(s.last_updated)) < ${st * 60})`
+      + ` and distance(la, lo, ${Number(z.lat)}, ${Number(z.lon)}) * 1000 <= ${Number(z.r) || 100} %}{% set ns.n = ns.n + 1 %}{% endif %}{% endfor %}`;
+  }
+
+  _condTpl(x, hold) {
+    const e = x.e, q = (s) => "'" + String(s).replace(/'/g, '') + "'";
+    const v = this._n(x.v) === null ? 0 : this._n(x.v);
+    const cur = x.op === 'on' ? `is_state(${q(e)}, 'on')` : x.op === 'off' ? `is_state(${q(e)}, 'off')`
+      : x.op === '=' ? `states(${q(e)}) == ${q(x.v)}` : x.op === '>' ? `states(${q(e)}) | float(0) > ${v}` : `states(${q(e)}) | float(0) < ${v}`;
+    const h = (this._n(hold) || 0) * 60;
+    return h > 0 ? `(${cur} or (as_timestamp(now()) - as_timestamp(states.${e}.last_changed, 0)) < ${h})` : `(${cur})`;
+  }
+
+  _ctlTpl(W) {
+    const c = this._draft;
+    const zl = c.z.map((z) => [!!z.on, Number(z.lat), Number(z.lon), Number(z.r) || 100]);
+    const st = Math.max(0, Number(c.stale) || 0);
+    const nf = this._min(c.night.from), nt = this._min(c.night.to);
+    const away = c.z[0].ltryb ? this._tgt(W, 'wyjazd', c.z[0].ltryb, c.z[0].lpn, c.z[0].lpw) : null;
+    const z2 = c.z[1].on && c.z[1].ltryb ? this._tgt(W, 'strefa 2', c.z[1].ltryb, c.z[1].lpn, c.z[1].lpw) : null;
+    let t = `{% set Z = ${this._jl(zl)} %}{% set ns = namespace(c0=0, c1=0) %}`
+      + `{% for s in expand(${this._jl(c.phones)}) %}{% set la = s.attributes.latitude %}{% set lo = s.attributes.longitude %}`
+      + `{% if la is number and lo is number and (${st} == 0 or (as_timestamp(now()) - as_timestamp(s.last_updated)) < ${st * 60}) %}`
+      + `{% if Z[0][0] and distance(la, lo, Z[0][1], Z[0][2]) * 1000 <= Z[0][3] %}{% set ns.c0 = ns.c0 + 1 %}{% endif %}`
+      + `{% if Z[1][0] and distance(la, lo, Z[1][1], Z[1][2]) * 1000 <= Z[1][3] %}{% set ns.c1 = ns.c1 + 1 %}{% endif %}`
+      + `{% endif %}{% endfor %}`
+      + `{% set home = (not Z[0][0]) or ${c.phones.length} == 0 or ns.c0 > 0 %}`
+      + `{% set mins = now().hour * 60 + now().minute %}`
+      + `{% set night = ${nf > nt ? `(mins >= ${nf} or mins < ${nt})` : `(mins >= ${nf} and mins < ${nt})`} %}`
+      + `{% set out = namespace(t=none) %}`
+      + `{% if not home %}{% if ns.c1 > 0 and ${this._jl(!!z2)} %}{% set out.t = ${this._jl(z2)} %}{% else %}{% set out.t = ${this._jl(away)} %}{% endif %}`
+      + `{% elif is_state('${WIET_BOOL}', 'on') %}{% set out.t = ${this._jl(this._wietTgt(W))} %}`
+      + `{% else %}`;
+    c.rules.forEach((r) => {
+      const cs = this._ruleConds(r);
+      if (!r.on || !cs.length) return;
+      const d = this._boostTgt(W, 'reguła ' + r.name, r.dpn, r.dpw), n = this._boostTgt(W, 'reguła ' + r.name, r.npn, r.npw);
+      t += `{% if out.t is none and ${cs.map((x) => this._condTpl(x, r.hold)).join(' and ')} %}{% set out.t = ${this._jl(n)} if night else ${this._jl(d)} %}{% endif %}`;
+    });
+    const cyc = (cy, anchor, cond, src) => {
+      const e = Math.round((this._n(cy.every) || 0) * 60), d = this._n(cy.dur) || 0;
+      if (!cy.on || e <= 0 || d <= 0) return '';
+      return `{% if out.t is none and ${cond} and ((mins - ${anchor}) % 1440) % ${e} < ${d} %}{% set out.t = ${this._jl(this._boostTgt(W, src, cy.pn, cy.pw))} %}{% endif %}`;
+    };
+    t += cyc(c.cyc.night, nf, 'night', 'cykl nocny') + cyc(c.cyc.day, nt, 'not night', 'cykl dzienny');
+    const E = c.sched.on ? this._schedEntries(W) : [];
+    if (E.length) {
+      t += `{% if out.t is none %}{% set E = ${this._jl(E)} %}{% set wm = now().weekday() * 1440 + mins %}{% set sn = namespace(s=E[-1]) %}`
+        + `{% for e in E %}{% if e[0] <= wm %}{% set sn.s = e %}{% endif %}{% endfor %}{% set out.t = sn.s[1] %}{% endif %}`;
+    }
+    return t + `{% endif %}{{ out.t }}`;
+  }
 
   _lockSeq(W) {
     return W.lock ? [{ service: 'switch.turn_on', target: { entity_id: W.lock } },
       { wait_template: `{{ is_state('${W.lock}', 'on') }}`, timeout: '00:00:15', continue_on_timeout: true }] : [];
   }
 
-  _setNum(eid, v) {
-    if (!eid || v === '' || v === null || v === undefined || isNaN(Number(String(v).replace(',', '.')))) return [];
-    return [{ service: 'number.set_value', target: { entity_id: eid }, data: { value: Number(String(v).replace(',', '.')) } }];
-  }
-
-  // % biegu z trybu (Bieg 1/2/3) + sam tryb
-  _modeSeq(W, tryb, pn, pw) {
-    const s = [];
-    const g = this._gearOf(tryb);
-    if (g) s.push(...this._setNum(W.p['n' + g], pn), ...this._setNum(W.p['w' + g], pw));
-    if (tryb && W.sel) s.push({ service: 'select.select_option', target: { entity_id: W.sel }, data: { option: tryb } });
-    return s;
-  }
-
-  // szablon liczacy swieze telefony w strefie (po GPS, z promieniem)
-  _occTpl(z, cfg) {
-    const st = Math.max(0, Number(cfg.stale) || 0);
-    const ids = JSON.stringify(cfg.phones || []);
-    return `{% set ns = namespace(n=0) %}{% for s in expand(${ids}) %}{% set la = s.attributes.latitude %}{% set lo = s.attributes.longitude %}`
-      + `{% if la is number and lo is number and (${st} == 0 or (as_timestamp(now()) - as_timestamp(s.last_updated)) < ${st * 60})`
-      + ` and distance(la, lo, ${Number(z.lat)}, ${Number(z.lon)}) * 1000 <= ${Number(z.r)} %}{% set ns.n = ns.n + 1 %}{% endif %}{% endfor %}`;
-  }
-
-  _schedSlots(cfg) { return cfg.sched.slots.filter((s) => s.t && s.d.length && (s.tryb || s.temp !== '')); }
-
-  _genSched(cfg) {
-    const W = this._wt();
-    const slots = this._schedSlots(cfg);
-    const times = [...new Set(slots.map((s) => s.t))].sort();
-    return {
-      id: AUTO_IDS[0], alias: 'Rekuperacja – harmonogram',
-      description: 'Utworzone przez kartę compit-nano-one-card (zakładka Harmonogram). Zmieniaj w karcie, nie tutaj.',
-      mode: 'queued', variables: { compit_cfg: cfg },
-      trigger: times.map((t) => ({ platform: 'time', at: t + ':00' })),
-      condition: [],
-      action: [{ choose: slots.map((s) => ({
-        conditions: [{ condition: 'template', value_template: `{{ now().strftime('%H:%M') == '${s.t}' }}` }, { condition: 'time', weekday: s.d }],
-        sequence: [...this._lockSeq(W), ...this._modeSeq(W, s.tryb, s.pn, s.pw), ...this._setNum(W.temp, s.temp)],
-      })) }],
-    };
-  }
-
-  _genZone(i, cfg) {
-    const z = cfg.z[i], n = i + 1, W = this._wt();
-    const tpl = this._occTpl(z, cfg);
-    const pctIds = Object.values(W.p).filter(Boolean);
-    const scene = `rekuperacja_strefa_${n}_przed`;
-    const enter = [];
-    if (pctIds.length) enter.push({ service: 'scene.create', data: { scene_id: scene, snapshot_entities: pctIds } });
-    enter.push(...this._lockSeq(W));
-    const wm = Number(z.wm) || 0;
-    if (wm > 0 && (W.wietOpt || W.wietSw)) {
-      enter.push(...this._setNum(W.p.nw, z.wpn), ...this._setNum(W.p.ww, z.wpw));
-      if (W.wietOpt) enter.push({ service: 'select.select_option', target: { entity_id: W.sel }, data: { option: W.wietOpt } });
-      else enter.push({ service: 'switch.turn_on', target: { entity_id: W.wietSw } });
-      enter.push({ delay: { minutes: wm } });
-      if (!W.wietOpt && W.wietSw) enter.push({ service: 'switch.turn_off', target: { entity_id: W.wietSw } });
+  _genCtl() {
+    const c = this._draft, W = this._wt();
+    const ruleEnts = [...new Set(c.rules.filter((r) => r.on).flatMap((r) => this._ruleConds(r).map((x) => x.e)))];
+    const trig = [
+      { platform: 'time_pattern', minutes: '/1' },
+      { platform: 'homeassistant', event: 'start' },
+      { platform: 'state', entity_id: WIET_BOOL },
+      { platform: 'state', entity_id: WIET_BOOL, to: 'on', for: { minutes: Math.max(1, Number(c.wiet.min) || 15) }, id: 'wiet_off' },
+    ];
+    if (ruleEnts.length) trig.push({ platform: 'state', entity_id: ruleEnts });
+    if (c.phones.length && c.z[0].on) {
+      trig.push({ platform: 'template', id: 'wjazd1', value_template: this._countTpl(0) + '{{ ns.n > 0 }}' });
+      trig.push({ platform: 'template', id: 'wyjazd', value_template: this._countTpl(0) + '{{ ns.n == 0 }}', for: { minutes: 1 } });
     }
-    enter.push(...this._modeSeq(W, z.ntryb, z.npn, z.npw));
-    const leave = [...this._lockSeq(W)];
-    if (!W.wietOpt && W.wietSw) leave.push({ service: 'switch.turn_off', target: { entity_id: W.wietSw } });
-    if (pctIds.length) leave.push({ service: 'scene.turn_on', target: { entity_id: 'scene.' + scene }, continue_on_error: true });
-    leave.push(...this._modeSeq(W, z.ltryb, z.lpn, z.lpw));
+    if (c.phones.length && c.z[1].on) trig.push({ platform: 'template', id: 'wjazd2', value_template: this._countTpl(1) + '{{ ns.n > 0 }}' });
+    const bon = { service: 'input_boolean.turn_on', target: { entity_id: WIET_BOOL } };
+    const boff = { service: 'input_boolean.turn_off', target: { entity_id: WIET_BOOL } };
+    const ch = [{ conditions: [{ condition: 'trigger', id: 'wiet_off' }], sequence: [boff] },
+      { conditions: [{ condition: 'trigger', id: 'wyjazd' }], sequence: [boff] }];
+    if (c.z[0].wiet && (Number(c.wiet.min) || 0) > 0) ch.push({ conditions: [{ condition: 'trigger', id: 'wjazd1' }], sequence: [bon] });
+    if (c.z[1].wiet && (Number(c.wiet.min) || 0) > 0) ch.push({ conditions: [{ condition: 'trigger', id: 'wjazd2' }], sequence: [bon] });
+    const ifDo = (cond, seq) => ({ if: [{ condition: 'template', value_template: cond }], then: seq });
+    const action = [
+      { choose: ch },
+      { variables: { t: this._ctlTpl(W) } },
+      { condition: 'template', value_template: '{{ t is mapping }}' },
+      { variables: {
+        dn: "{{ t.n is string and t.pn is number and ((states(t.n) | float(-999)) - t.pn) | abs > 0.4 }}",
+        dw: "{{ t.w is string and t.pw is number and ((states(t.w) | float(-999)) - t.pw) | abs > 0.4 }}",
+        dm: W.sel ? `{{ t.tryb is string and t.tryb != '' and states('${W.sel}') != t.tryb }}` : '{{ false }}',
+        dt: "{{ t.tid is string and t.temp is number and ((states(t.tid) | float(-999)) - t.temp) | abs > 0.05 }}",
+      } },
+      { condition: 'template', value_template: '{{ dn or dw or dm or dt }}' },
+      ...this._lockSeq(W),
+      ifDo('{{ dn }}', [{ service: 'number.set_value', target: { entity_id: '{{ t.n }}' }, data: { value: '{{ t.pn }}' } }]),
+      ifDo('{{ dw }}', [{ service: 'number.set_value', target: { entity_id: '{{ t.w }}' }, data: { value: '{{ t.pw }}' } }]),
+      ifDo('{{ dt }}', [{ service: 'number.set_value', target: { entity_id: '{{ t.tid }}' }, data: { value: '{{ t.temp }}' } }]),
+    ];
+    if (W.sel) action.push(ifDo('{{ dm }}', [{ service: 'select.select_option', target: { entity_id: W.sel }, data: { option: '{{ t.tryb }}' } }]));
+    if (W.wietSw) {
+      action.push(ifDo(`{{ t.src == 'wietrzenie' and not is_state('${W.wietSw}', 'on') }}`, [{ service: 'switch.turn_on', target: { entity_id: W.wietSw } }]));
+      action.push(ifDo(`{{ t.src != 'wietrzenie' and is_state('${W.wietSw}', 'on') }}`, [{ service: 'switch.turn_off', target: { entity_id: W.wietSw } }]));
+    }
     return {
-      id: AUTO_IDS[n], alias: `Rekuperacja – strefa ${n}`,
-      description: `Utworzone przez kartę compit-nano-one-card (zakładka Strefy). Wjazd = pierwszy telefon w strefie, wyjazd = ostatni wyszedł. Zmieniaj w karcie, nie tutaj.`,
-      mode: 'restart', variables: { compit_cfg: cfg },
-      trigger: [
-        { platform: 'template', id: 'wjazd', value_template: tpl + '{{ ns.n > 0 }}' },
-        { platform: 'template', id: 'wyjazd', value_template: tpl + '{{ ns.n == 0 }}', for: { minutes: 1 } },
-      ],
-      condition: [],
-      action: [{ choose: [
-        { conditions: [{ condition: 'trigger', id: 'wjazd' }], sequence: enter },
-        { conditions: [{ condition: 'trigger', id: 'wyjazd' }], sequence: leave },
-      ] }],
+      id: AUTO_IDS[0], alias: 'Rekuperacja – sterownik',
+      description: 'Utworzone przez kartę compit-nano-one-card (Harmonogram + Strefy). Co minutę ustala tryb i %: wyjazd > wietrzenie > reguły > cykle > harmonogram. Zmieniaj w karcie, nie tutaj.',
+      mode: 'queued', max: 10, max_exceeded: 'silent',
+      variables: { compit_cfg: c },
+      trigger: trig, condition: [], action,
     };
   }
 
@@ -1043,9 +1206,20 @@ class CompitNanoOneCard extends HTMLElement {
     if (this._autoExists) this._autoExists[id] = false;
   }
 
+  async _ensureWietBool() {
+    if (this._hass.states[WIET_BOOL]) return;
+    let list = [];
+    try { list = await this._hass.callWS({ type: 'input_boolean/list' }) || []; } catch (e) { list = []; }
+    if (!list.some((x) => x.id === WIET_BOOL.split('.')[1] || x.name === 'Rekuperacja wietrzenie')) {
+      await this._hass.callWS({ type: 'input_boolean/create', name: 'Rekuperacja wietrzenie', icon: 'mdi:weather-windy' });
+      this._pushLog({ t: new Date(), e: 'karta', s: 'Dodano przełącznik ' + WIET_BOOL });
+    }
+  }
+
   async _saveAll() {
-    if (!this._isAdmin()) { this._flashMsg(false, 'Zapis automatyk wymaga konta administratora HA.'); return; }
+    if (!this._isAdmin()) { this._flashMsg(false, 'Zapis wymaga konta administratora HA.'); return; }
     const cfg = this._mergeCfg(this._draft);
+    this._draft = cfg;
     try { localStorage.setItem(LS_CFG, JSON.stringify(cfg)); } catch (e) { /* bez localStorage */ }
     this._saving = true; this._schedule();
     const done = [];
@@ -1062,18 +1236,18 @@ class CompitNanoOneCard extends HTMLElement {
           done.push('strefa ' + (i + 1));
         } else if (ex) await this._hass.callWS({ type: 'zone/delete', zone_id: ex.id });
       }
-      const put = async (a) => { await this._hass.callApi('POST', 'config/automation/config/' + a.id, a); this._autoExists[a.id] = true; };
-      if (cfg.sched.on && this._schedSlots(cfg).length) { await put(this._genSched(cfg)); done.push('harmonogram'); }
-      else await this._delAuto(AUTO_IDS[0]);
-      for (const i of [0, 1]) {
-        if (cfg.z[i].on) { await put(this._genZone(i, cfg)); done.push('automatyka strefy ' + (i + 1)); }
-        else await this._delAuto(AUTO_IDS[i + 1]);
-      }
-      this._pushLog({ t: new Date(), e: 'karta', s: 'Zapisano: ' + (done.join(', ') || 'nic (wszystko wyłączone)') });
-      this._flashMsg(true, '✓ Zapisane w HA: ' + (done.join(', ') || 'wszystko wyłączone'));
+      await this._ensureWietBool();
+      done.push('przełącznik wietrzenia');
+      const a = this._genCtl();
+      await this._hass.callApi('POST', 'config/automation/config/' + a.id, a);
+      this._autoExists[a.id] = true;
+      done.push('sterownik');
+      for (const id of OLD_IDS) if (this._autoExists[id]) await this._delAuto(id);
+      this._pushLog({ t: new Date(), e: 'karta', s: 'Zapisano: ' + done.join(', ') });
+      this._flashMsg(true, '✓ Zapisane w HA: ' + done.join(', '));
     } catch (e) {
       const m = e && (e.message || e.body && e.body.message) ? (e.message || e.body.message) : JSON.stringify(e);
-      this._pushLog({ t: new Date(), e: 'karta', s: 'Błąd zapisu automatyk: ' + m });
+      this._pushLog({ t: new Date(), e: 'karta', s: 'Błąd zapisu: ' + m });
       this._flashMsg(false, '✗ Błąd zapisu: ' + m);
     }
     this._saving = false; this._autoCache = null; this._schedule();
@@ -1082,13 +1256,18 @@ class CompitNanoOneCard extends HTMLElement {
   async _deleteAll() {
     this._confirmDel = false;
     if (!this._isAdmin()) return;
-    for (const id of AUTO_IDS) await this._delAuto(id);
+    for (const id of AUTO_IDS.concat(OLD_IDS)) await this._delAuto(id);
     try {
       const zones = await this._hass.callWS({ type: 'zone/list' }) || [];
       for (const z of zones.filter((x) => /^Rekuperacja [12]$/.test(x.name))) await this._hass.callWS({ type: 'zone/delete', zone_id: z.id });
     } catch (e) { /* brak */ }
-    this._pushLog({ t: new Date(), e: 'karta', s: 'Usunięto automatyki i strefy rekuperacji' });
-    this._flashMsg(true, '✓ Usunięte: harmonogram, strefy i ich automatyki (ustawienia zostały w karcie)');
+    try {
+      const bl = await this._hass.callWS({ type: 'input_boolean/list' }) || [];
+      const b = bl.find((x) => x.id === WIET_BOOL.split('.')[1]);
+      if (b) await this._hass.callWS({ type: 'input_boolean/delete', input_boolean_id: b.id });
+    } catch (e) { /* brak */ }
+    this._pushLog({ t: new Date(), e: 'karta', s: 'Usunięto sterownik, strefy i przełącznik wietrzenia' });
+    this._flashMsg(true, '✓ Usunięte z HA: sterownik, strefy, przełącznik wietrzenia (ustawienia zostały w karcie)');
   }
 
   // v2.2: panel "Rekuperacja" w lewym pasku HA - sprawdzany przy kazdym otwarciu karty,
@@ -1138,12 +1317,14 @@ class CompitNanoOneCard extends HTMLElement {
       ${b.st === 'err' ? `<details><summary>Dodaj ręcznie</summary><div class="small">Ustawienia → Pulpity → <b>+ Dodaj pulpit</b> → Nowy pulpit od zera → tytuł <b>Rekuperacja</b>, ikona <code>mdi:air-filter</code>, zaznacz „Pokaż w pasku bocznym” → Utwórz. Otwórz go → ✎ Edytuj → ⋮ → <b>Edytor kodu</b> i wklej:</div><pre class="pre">${esc(yaml)}</pre></details>` : ''}</div>`;
   }
 
-  // automatyki karty, ktore HA ma jako encje
+
+  // automatyka sterownika jako encja HA
   _autoEnts() {
     if (!this._hass) return [];
     if (this._autoCache && this._autoCache.src === this._hass.states) return this._autoCache.list;
     if (!this._autoCache || Date.now() - this._autoCache.t > 20000 || this._autoCache.list.some((id) => !this._hass.states[id])) {
-      const list = Object.keys(this._hass.states).filter((id) => id.startsWith('automation.') && AUTO_IDS.includes(this._hass.states[id].attributes.id));
+      const all = AUTO_IDS.concat(OLD_IDS);
+      const list = Object.keys(this._hass.states).filter((id) => id.startsWith('automation.') && all.includes(this._hass.states[id].attributes.id));
       this._autoCache = { t: Date.now(), list };
     }
     this._autoCache.src = this._hass.states;
@@ -1151,17 +1332,17 @@ class CompitNanoOneCard extends HTMLElement {
   }
 
   _autoLabel(s) {
-    const i = AUTO_IDS.indexOf(s.attributes.id);
-    return i === 0 ? 'Harmonogram' : 'Strefa ' + i;
+    const i = OLD_IDS.indexOf(s.attributes.id);
+    return i < 0 ? 'Sterownik' : i === 0 ? 'Harmonogram (stary)' : 'Strefa ' + i + ' (stara)';
   }
 
   _autoLine() {
     const list = this._autoEnts().map((id) => this._hass.states[id]);
-    if (!list.length) return '';
-    const last = list.filter((s) => s.attributes.last_triggered).sort((a, b) => new Date(b.attributes.last_triggered) - new Date(a.attributes.last_triggered))[0];
-    const when = (d) => { const t = new Date(d); return (new Date().toDateString() === t.toDateString() ? '' : pad2(t.getDate()) + '.' + pad2(t.getMonth() + 1) + ' ') + pad2(t.getHours()) + ':' + pad2(t.getMinutes()); };
+    const wb = this._hass.states[WIET_BOOL];
+    if (!list.length && !wb) return '';
+    const now = this._draft ? this._nowCtl() : null;
     return `<div class="autol">${ico('clock')}<span>${list.map((s) => `<span class="${s.state === 'on' ? 'aon' : 'mute'}" data-e="${esc(s.entity_id)}">${esc(this._autoLabel(s))} ${s.state === 'on' ? '✓' : '(wył.)'}</span>`).join(' · ')}
-      ${last ? ` · ostatnio sterowało: <b>${esc(this._autoLabel(last))}</b> ${when(last.attributes.last_triggered)}` : ''}</span></div>`;
+      ${now ? ` · teraz steruje: ${this._tgtTxt(now)}` : ''}</span></div>`;
   }
 
   _formFocused() {
@@ -1185,42 +1366,162 @@ class CompitNanoOneCard extends HTMLElement {
   _pctIn(path, v, lbl) {
     return `<label class="pin">${lbl} <input class="sm" inputmode="numeric" data-bind="${path}" value="${esc(v)}" placeholder="—">%</label>`;
   }
+  _numIn(path, v, lbl, unit, cls) {
+    return `<label>${lbl} <input class="${cls || 'sm'}" inputmode="decimal" data-bind="${path}" value="${esc(v)}">${unit ? ' ' + unit : ''}</label>`;
+  }
 
   _planHead() {
     let s = this._flashBox();
     if (!this._isAdmin()) s += '<div class="warnbox">Zapis harmonogramu i stref wymaga konta <b>administratora</b> HA.</div>';
-    if (!this._wt().sel) s += `<div class="errbox"><b>Brak encji „Ustaw tryb”</b> (<code>${esc(this._id('set_tryb'))}</code>) – automatyki nie będą miały czym sterować. Wgraj YAML v1.6+.</div>`;
+    if (!this._wt().sel) s += `<div class="errbox"><b>Brak encji „Ustaw tryb”</b> (<code>${esc(this._id('set_tryb'))}</code>) – sterownik nie będzie miał czym sterować. Wgraj YAML v1.6+.</div>`;
+    const now = this._nowCtl();
+    if (now) s += `<div class="nowl">${ico('clock')} Teraz steruje: ${this._tgtTxt(now)} <span class="small mute">(wg ustawień w karcie${this._autoEnts().length ? '' : ' – jeszcze niezapisanych w HA'})</span></div>`;
     return s;
   }
 
   _saveBar() {
     return `<div class="savebar"><button class="act" data-saveall ${this._saving || !this._isAdmin() ? 'disabled' : ''}>${this._saving ? 'Zapisuję…' : 'Zapisz w HA'}</button>
-      <span class="small mute">Zapis tworzy / aktualizuje strefy i automatyki w HA. Po zmianie YAML na ESP kliknij Zapisz jeszcze raz.</span></div>`;
+      <span class="small mute">Zapis tworzy / aktualizuje w HA sterownik, strefy i przełącznik wietrzenia. Po zmianie YAML na ESP kliknij Zapisz jeszcze raz.</span></div>`;
   }
 
   // ---------------- zakladka Harmonogram ----------------
+  _modeColor(tryb) {
+    const g = this._gearOf(tryb);
+    if (g) return { 1: '#27b4ff', 2: '#3ddc6f', 3: '#ffa43a' }[g] || '#b07cff';
+    if (!tryb) return '#5b6878';
+    const pal = ['#8d9aab', '#b07cff', '#ff6b8a', '#2ec4b6', '#e2c044'];
+    let h = 0; for (const ch of tryb) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return pal[h % pal.length];
+  }
+
+  _slotLabel(s) { return (s.tryb || (this._n(s.temp) !== null ? s.temp + ' °C' : '—')).replace(/^Reczny\s+/i, '').replace(/^Ręczny\s+/i, ''); }
+
+  // bloki dnia: [{slot index | -1 (przeniesione z dnia wczesniej), start, end}]
+  _dayBlocks(di) {
+    const sl = this._draft.sched.slots;
+    const ev = [];
+    sl.forEach((s, i) => { if (s.d.includes(DAYS[di][0])) ev.push({ i, m: this._min(s.t) }); });
+    ev.sort((a, b) => a.m - b.m || a.i - b.i);
+    let carry = null;
+    for (let k = 1; k <= 7 && !carry; k++) {
+      const pd = DAYS[(di - k + 7) % 7][0];
+      let best = null;
+      sl.forEach((s, i) => { if (s.d.includes(pd) && (!best || this._min(s.t) >= best.m)) best = { i, m: this._min(s.t) }; });
+      carry = best;
+    }
+    const out = [];
+    const first = ev.length ? ev[0].m : 1440;
+    if (first > 0 && carry) out.push({ i: carry.i, carry: true, a: 0, b: first });
+    ev.forEach((e, k) => out.push({ i: e.i, a: e.m, b: k + 1 < ev.length ? ev[k + 1].m : 1440 }));
+    return out;
+  }
+
+  _cycMarks(cy, anchor, inWin) {
+    const e = Math.round((this._n(cy.every) || 0) * 60);
+    if (!cy.on || e <= 0) return [];
+    const out = [];
+    for (let m = anchor; m < anchor + 1440; m += e) { const mm = m % 1440; if (inWin(mm)) out.push(mm); }
+    return out;
+  }
+
+  _renderChart() {
+    const c = this._draft, sl = c.sched.slots;
+    const d = new Date(), today = (d.getDay() + 6) % 7, nowM = d.getHours() * 60 + d.getMinutes();
+    const pc = (m) => (m / 1440 * 100).toFixed(3) + '%';
+    const nf = this._min(c.night.from), nt = this._min(c.night.to);
+    const nightBands = nf > nt ? [[nf, 1440], [0, nt]] : [[nf, nt]];
+    const marks = this._cycMarks(c.cyc.night, nf, (m) => this._isNight(m)).map((m) => [m, 'n'])
+      .concat(this._cycMarks(c.cyc.day, nt, (m) => !this._isNight(m)).map((m) => [m, 'd']));
+    const head = `<div class="wrow whead"><span></span><div class="wtrack0">${[0, 3, 6, 9, 12, 15, 18, 21, 24].map((h) => `<span style="left:${pc(h * 60)}">${h}</span>`).join('')}</div></div>`;
+    const rows = DAYS.map(([k, l], di) => {
+      const blocks = this._dayBlocks(di).map((b) => {
+        const s = sl[b.i], col = this._modeColor(s.tryb), sel = this._slotEdit === b.i && !b.carry;
+        return `<div class="blk ${b.carry ? 'carry' : ''} ${sel ? 'sel' : ''}" style="left:${pc(b.a)};width:${pc(b.b - b.a)};--bc:${col}" data-blk="${b.i}" data-bday="${di}" title="${esc(this._hm(this._min(s.t)) + ' ' + (s.tryb || ''))}">
+          ${b.carry ? '' : `<span class="bh" data-drag="${b.i}" data-dday="${di}"></span>`}<span class="bl">${b.carry ? '' : esc(s.t) + ' '}${esc(this._slotLabel(s))}</span></div>`;
+      }).join('');
+      return `<div class="wrow"><span class="wday ${di === today ? 'on' : ''}">${l}</span><div class="wtrack" data-track="${di}">
+        ${nightBands.map(([a, b]) => `<i class="nband" style="left:${pc(a)};width:${pc(b - a)}"></i>`).join('')}
+        ${blocks}
+        ${marks.map(([m, t]) => `<i class="cmark ${t}" style="left:${pc(m)}" title="cykl ${t === 'n' ? 'nocny' : 'dzienny'} ${this._hm(m)}"></i>`).join('')}
+        ${di === today ? `<i class="nowline" style="left:${pc(nowM)}"></i>` : ''}</div></div>`;
+    }).join('');
+    const used = [...new Set(sl.map((s) => s.tryb).filter(Boolean))];
+    return `<div class="wk">${head}${rows}</div>
+      <div class="legend">${used.map((t) => `<span><i style="background:${this._modeColor(t)}"></i>${esc(t)}</span>`).join('')}
+        <span><i class="lg-night"></i>noc ${esc(c.night.from)}–${esc(c.night.to)}</span>${marks.length ? '<span><i class="lg-cyc"></i>start cyklu</span>' : ''}<span><i class="lg-now"></i>teraz</span></div>
+      <div class="small mute">Klik w blok = edycja, dwuklik = nowy wpis od tej godziny (klik w pusty pasek też dodaje). Przeciągnij lewą krawędź bloku, żeby zmienić godzinę (co 15 min).</div>`;
+  }
+
+  _slotEditor(i) {
+    const s = this._draft.sched.slots[i], W = this._wt();
+    if (!s) return '';
+    const g = this._gearOf(s.tryb);
+    return `<div class="sedit"><div class="zh"><b>Wpis ${esc(s.t)} · ${esc(s.tryb || '—')}</b><button class="mini" data-sclose>✕ zamknij</button></div>
+      <div class="days">${DAYS.map(([k, l]) => `<button class="chip ${s.d.includes(k) ? 'on' : ''}" data-day="${i}:${k}">${l}</button>`).join('')}
+        <button class="mini" data-dayset="${i}:wd">Pn–Pt</button><button class="mini" data-dayset="${i}:we">Weekend</button><button class="mini" data-dayset="${i}:all">Cały tydzień</button></div>
+      <div class="srow"><label>Od <input type="time" step="900" data-bind="sched.slots.${i}.t" data-rr value="${esc(s.t)}"></label>
+        <label>Tryb ${this._trybSel('sched.slots.' + i + '.tryb', s.tryb, W, '— bez zmiany —')}</label>
+        ${W.temp ? this._numIn(`sched.slots.${i}.temp`, s.temp, 'Temp. ręczna', '°C') : ''}
+        ${g ? this._pctIn(`sched.slots.${i}.pn`, s.pn, 'Nawiew') + this._pctIn(`sched.slots.${i}.pw`, s.pw, 'Wywiew') : ''}
+        <button class="mini" data-delslot="${i}">🗑 usuń wpis</button></div>
+      ${g ? `<div class="small mute">Puste % = domyślne % biegu ${g} (niżej).</div>` : ''}</div>`;
+  }
+
   _renderHarm() {
     if (!this._draft) return '<div class="mute">Wczytuję ustawienia z HA…</div>';
     const c = this._draft, W = this._wt();
-    const rows = c.sched.slots.map((s, i) => {
-      const g = this._gearOf(s.tryb);
-      return `<div class="slot">
-        <div class="days">${DAYS.map(([k, l]) => `<button class="chip ${s.d.includes(k) ? 'on' : ''}" data-day="${i}:${k}">${l}</button>`).join('')}
-          <button class="mini" data-dayset="${i}:wd">Pn–Pt</button><button class="mini" data-dayset="${i}:we">Weekend</button><button class="mini" data-dayset="${i}:all">Codziennie</button></div>
-        <div class="srow"><label>Od <input type="time" data-bind="sched.slots.${i}.t" value="${esc(s.t)}"></label>
-          <label>Tryb ${this._trybSel('sched.slots.' + i + '.tryb', s.tryb, W, '— bez zmiany —')}</label>
-          ${W.temp ? `<label>Temp. ręczna <input class="sm" inputmode="decimal" data-bind="sched.slots.${i}.temp" value="${esc(s.temp)}" placeholder="—"> °C</label>` : ''}
-          ${g ? this._pctIn(`sched.slots.${i}.pn`, s.pn, 'Nawiew') + this._pctIn(`sched.slots.${i}.pw`, s.pw, 'Wywiew') : ''}
-          <button class="mini" data-delslot="${i}" title="usuń wpis">✕</button></div>
-        ${!s.d.length ? '<div class="small warn">Zaznacz dni – bez dni wpis nic nie zrobi.</div>' : ''}
-      </div>`;
-    }).join('');
+    const wb = this._hass.states[WIET_BOOL];
+    const list = c.sched.slots.map((s, i) => `<div class="lrow"><span class="dot2" style="background:${this._modeColor(s.tryb)}"></span>
+      <span>${esc(s.d.map((d) => DAYS.find((x) => x[0] === d)[1]).join(' ') || 'bez dni')}</span><b>${esc(s.t)}</b><span>${esc(s.tryb || '—')}</span>
+      <button class="mini" data-sopen="${i}">edytuj</button></div>`).join('');
+    const rule = (r, ri) => `<div class="rule"><div class="zh"><label class="tgl"><input type="checkbox" data-bind="rules.${ri}.on" data-rr ${r.on ? 'checked' : ''}>
+        <input class="md" data-bind="rules.${ri}.name" value="${esc(r.name)}"></label><button class="mini" data-delrule="${ri}">🗑 usuń regułę</button></div>
+      <div class="sublbl">Gdy wszystkie naraz</div>
+      ${r.conds.map((x, ci) => `<div class="srow cond"><input class="lg" list="cents" placeholder="encja, np. light.lazienka" data-bind="rules.${ri}.conds.${ci}.e" data-rr value="${esc(x.e)}">
+        <select data-bind="rules.${ri}.conds.${ci}.op" data-rr>${[['on', 'włączone'], ['off', 'wyłączone'], ['>', 'większe niż'], ['<', 'mniejsze niż'], ['=', 'równe']].map(([v, l]) => `<option value="${v}" ${x.op === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        ${/[<>=]/.test(x.op) ? `<input class="sm" data-bind="rules.${ri}.conds.${ci}.v" value="${esc(x.v)}">` : ''}
+        <span class="small mute">${(() => { const s = this._hass.states[x.e]; return s ? 'teraz: ' + esc(s.state) + (s.attributes.unit_of_measurement ? ' ' + esc(s.attributes.unit_of_measurement) : '') : x.e ? '<span class="warn">nie ma takiej encji</span>' : ''; })()}</span>
+        <button class="mini" data-delcond="${ri}:${ci}">✕</button></div>`).join('')}
+      <div class="row"><button class="mini" data-addcond="${ri}">+ warunek</button></div>
+      <div class="srow"><span class="mute">Dzień</span>${this._pctIn(`rules.${ri}.dpn`, r.dpn, 'Nawiew')}${this._pctIn(`rules.${ri}.dpw`, r.dpw, 'Wywiew')}
+        <span class="mute">Noc</span>${this._pctIn(`rules.${ri}.npn`, r.npn, 'Nawiew')}${this._pctIn(`rules.${ri}.npw`, r.npw, 'Wywiew')}
+        ${this._numIn(`rules.${ri}.hold`, r.hold, 'Trzymaj jeszcze', 'min')}</div></div>`;
+    const cyc = (k, l) => { const cy = c.cyc[k]; return `<div class="srow"><label class="tgl"><input type="checkbox" data-bind="cyc.${k}.on" data-rr ${cy.on ? 'checked' : ''}> <b>${l}</b></label>
+      ${this._numIn(`cyc.${k}.every`, cy.every, 'co', 'h')}${this._numIn(`cyc.${k}.dur`, cy.dur, 'na', 'min')}${this._pctIn(`cyc.${k}.pn`, cy.pn, 'Nawiew')}${this._pctIn(`cyc.${k}.pw`, cy.pw, 'Wywiew')}</div>`; };
+    const ents = Object.keys(this._hass.states).filter((id) => /^(light|switch|binary_sensor|sensor|input_boolean|fan|media_player)\./.test(id)).sort();
     return `<div class="plan" data-form>
       ${this._planHead()}
-      <label class="tgl"><input type="checkbox" data-bind="sched.on" data-rr ${c.sched.on ? 'checked' : ''}> Harmonogram włączony</label>
-      ${rows || '<div class="mute small">Brak wpisów. Dodaj pierwszy, np. Pn–Pt 06:00 Bieg 2, 22:00 Bieg 1.</div>'}
+      <div class="zh"><label class="tgl"><input type="checkbox" data-bind="sched.on" data-rr ${c.sched.on ? 'checked' : ''}> <b>Harmonogram tygodniowy</b></label>
+        <span class="small mute">działa, gdy ktoś jest w strefie 1${c.z[0].on && c.phones.length ? '' : ' (bez telefonów / strefy: zawsze)'}</span></div>
+      ${this._renderChart()}
       <div class="row"><button class="opt" data-addslot>+ Dodaj wpis</button></div>
-      <div class="small mute">O podanej godzinie, w zaznaczone dni, HA ustawia tryb (i % nawiewu / wywiewu dla biegu, jeśli wpisane). Tryb trzyma się do następnego wpisu albo do zmiany przez strefy.</div>
+      ${this._slotEdit !== undefined && this._slotEdit !== null ? this._slotEditor(this._slotEdit) : ''}
+      <details class="lst"><summary>Lista wpisów (${c.sched.slots.length})</summary>${list || '<div class="small mute">Brak wpisów.</div>'}</details>
+      <div class="pgrid">
+        <div>
+          <h3 class="rest">Noc i biegi</h3>
+          <div class="srow"><label>Noc od <input type="time" step="900" data-bind="night.from" data-rr value="${esc(c.night.from)}"></label><label>do <input type="time" step="900" data-bind="night.to" data-rr value="${esc(c.night.to)}"></label></div>
+          <div class="sublbl">Domyślne % biegów (gdy wpis nie ma własnych)</div>
+          <table class="ptab"><tr><th></th><th>Nawiew</th><th>Wywiew</th></tr>${['1', '2', '3'].map((g) => `<tr><td>Bieg ${g}</td><td><input class="sm" inputmode="numeric" data-bind="base.n${g}" value="${esc(c.base['n' + g])}"> %</td><td><input class="sm" inputmode="numeric" data-bind="base.w${g}" value="${esc(c.base['w' + g])}"> %</td></tr>`).join('')}</table>
+          <div class="srow"><label>Reguły, cykle i wietrzenie (bez opcji w ESP) jadą na <select data-bind="boost" data-rr>${['1', '2', '3'].map((g) => `<option value="${g}" ${String(c.boost) === g ? 'selected' : ''}>biegu ${g}</option>`).join('')}</select></label>
+            ${this._gearOpt(W, c.boost) ? '' : `<span class="small warn">brak trybu z „bieg ${esc(c.boost)}” w „Ustaw tryb”</span>`}</div>
+          <h3 class="rest">${ico('sync')} Cykle</h3>
+          ${cyc('day', 'Dzień')}${cyc('night', 'Noc')}
+          <div class="small mute">Np. w nocy co 2 h na 15 min 60/60 %. Liczone od początku dnia / nocy. Potem wraca tryb z harmonogramu.</div>
+          <h3 class="rest">${ico('wind')} Wietrzenie</h3>
+          <div class="srow">${this._numIn('wiet.min', c.wiet.min, 'Czas', 'min')}${this._pctIn('wiet.pn', c.wiet.pn, 'Nawiew')}${this._pctIn('wiet.pw', c.wiet.pw, 'Wywiew')}</div>
+          <div class="srow">${wb ? `<span>Przełącznik <code data-e="${WIET_BOOL}">${WIET_BOOL}</code>: <b>${wb.state === 'on' ? 'WŁ.' : 'WYŁ.'}</b></span><button class="mini" data-wbool>${wb.state === 'on' ? 'Wyłącz' : 'Włącz teraz'}</button>`
+            : `<span class="small mute">Po zapisie powstanie przełącznik <code>${WIET_BOOL}</code> – wstaw go na dowolną swoją kartę.</span>`}</div>
+          <div class="small mute">${W.wietOpt ? `Wietrzenie z ESP: „${esc(W.wietOpt)}”.` : W.wietSw ? 'Wietrzenie z ESP: przełącznik ' + esc(W.wietSw) + '.' : `W YAML nie ma jeszcze wietrzenia – do tego czasu wietrzenie = bieg ${esc(c.boost)} z tymi %.`}</div>
+        </div>
+        <div>
+          <h3 class="rest">${ico('filt')} Reguły (${c.rules.length})</h3>
+          ${c.rules.map(rule).join('') || '<div class="small mute">Np. „Łazienka”: light.lazienka włączone i przepływ wody &gt; 0 → nawiew/wywiew 90 %, trzymaj 10 min.</div>'}
+          <div class="row"><button class="opt" data-addrule>+ Dodaj regułę</button></div>
+          <div class="small mute">Kolejność ważności: wyjazd &gt; wietrzenie &gt; reguły (pierwsza pasująca) &gt; cykle &gt; harmonogram.</div>
+        </div>
+      </div>
+      <datalist id="cents">${ents.map((id) => `<option value="${esc(id)}">`).join('')}</datalist>
       ${this._saveBar()}
       ${this._sbBar()}
     </div>`;
@@ -1262,51 +1563,50 @@ class CompitNanoOneCard extends HTMLElement {
     }).join('');
     const cand = Object.keys(this._hass.states).filter((id) => /^(device_tracker|person)\./.test(id) && !c.phones.includes(id))
       .sort((a, b) => String(name(a)).localeCompare(String(name(b))));
-    const noWiet = !W.wietOpt && !W.wietSw;
     const zone = (i) => {
       const z = c.z[i], p = 'z.' + i + '.';
       const cnt = c.phones.filter((id) => this._phoneInfo(id).inZ[i]).length;
-      const gn = this._gearOf(z.ntryb), gl = this._gearOf(z.ltryb);
+      const gl = this._gearOf(z.ltryb);
       return `<div class="zone zc${i + 1} ${z.on ? '' : 'off'}">
-        <div class="zh"><label class="tgl"><input type="checkbox" data-bind="${p}on" data-rr ${z.on ? 'checked' : ''}> <b>Strefa ${i + 1}</b>${i ? ' <span class="small mute">(opcja)</span>' : ''}</label>
+        <div class="zh"><label class="tgl"><input type="checkbox" data-bind="${p}on" data-rr ${z.on ? 'checked' : ''}> <b>Strefa ${i + 1}</b>${i ? ' <span class="small mute">(opcja, np. „blisko domu”)</span>' : ' <span class="small mute">(dom)</span>'}</label>
           ${z.on ? `<span class="zb z${i + 1}">${cnt ? 'teraz w strefie: ' + cnt : 'nikogo w strefie'}</span>` : ''}</div>
         ${z.on ? `<div class="srow"><label>Promień <input class="sm" inputmode="numeric" data-bind="${p}r" data-map value="${esc(z.r)}"> m</label>
           <label>Szer. <input class="md" inputmode="decimal" data-bind="${p}lat" data-map value="${esc(z.lat)}"></label>
           <label>Dł. <input class="md" inputmode="decimal" data-bind="${p}lon" data-map value="${esc(z.lon)}"></label>
           <button class="mini" data-zhome="${i}">środek = dom</button></div>
-        <div class="sublbl">Wjazd (pierwszy telefon w strefie)</div>
-        <div class="srow"><label>Wietrzenie <input class="sm" inputmode="numeric" data-bind="${p}wm" value="${esc(z.wm)}"> min</label>
-          ${this._pctIn(p + 'wpn', z.wpn, 'Nawiew')}${this._pctIn(p + 'wpw', z.wpw, 'Wywiew')}</div>
-        <div class="srow"><label>Potem tryb ${this._trybSel(p + 'ntryb', z.ntryb, W, '— bez zmiany —')}</label>
-          ${gn ? this._pctIn(p + 'npn', z.npn, 'Nawiew') + this._pctIn(p + 'npw', z.npw, 'Wywiew') : ''}</div>
-        <div class="sublbl">Wyjazd (ostatni telefon wyszedł)</div>
-        <div class="srow"><label>Tryb ${this._trybSel(p + 'ltryb', z.ltryb, W, '— bez zmiany —')}</label>
+        <div class="srow"><label class="tgl"><input type="checkbox" data-bind="${p}wiet" ${z.wiet ? 'checked' : ''}> Wjazd (pierwszy telefon) włącza wietrzenie na ${esc(c.wiet.min)} min</label></div>
+        <div class="sublbl">${i ? 'Gdy ktoś tu jest, a nikogo w strefie 1' : 'Wyjazd (ostatni telefon wyszedł)'}</div>
+        <div class="srow"><label>Tryb ${this._trybSel(p + 'ltryb', z.ltryb, W, i ? '— jak wyjazd —' : '— bez zmiany —')}</label>
           ${gl ? this._pctIn(p + 'lpn', z.lpn, 'Nawiew') + this._pctIn(p + 'lpw', z.lpw, 'Wywiew') : ''}</div>
-        <div class="small mute">Przy wyjeździe HA najpierw przywraca % biegów sprzed wjazdu, potem ustawia tryb wyjazdu (i % wpisane wyżej).</div>` : ''}
+        ${i ? '' : '<div class="small mute">Gdy ktoś jest w strefie 1, działa harmonogram z zakładki Harmonogram (z regułami i cyklami).</div>'}` : ''}
       </div>`;
     };
     return `<div class="plan" data-form>
       ${this._planHead()}
-      ${noWiet ? '<div class="warnbox">W YAML na ESP nie ma jeszcze wietrzenia (opcja „Wietrzenie” w „Ustaw tryb” albo przełącznik <code>switch.' + esc(this._prefix) + '_wietrzenie</code>). Na razie przy wjeździe HA od razu ustawi tryb normalny. Po wgraniu YAML z wietrzeniem kliknij Zapisz.</div>' : ''}
+      <div class="zgrid"><div>
       <h3>${ico('phone')} Telefony (${c.phones.length})</h3>
       ${phones || '<div class="small mute">Dodaj telefony (encje device_tracker z aplikacji Home Assistant albo osoby).</div>'}
       <div class="srow"><select data-addph><option value="">+ dodaj telefon…</option>${cand.map((id) => `<option value="${esc(id)}">${esc(name(id))} (${esc(id)})</option>`).join('')}</select>
         <label>Nieaktualny po <input class="sm" inputmode="numeric" data-bind="stale" value="${esc(c.stale)}"> min</label><span class="small mute">(0 = nie sprawdzaj)</span></div>
-      <h3 class="rest">${ico('map')} Mapa</h3>
-      <div class="row small"><span class="mute">Klik w mapę ustawia środek:</span>
-        ${[0, 1].map((i) => `<button class="mini ${(this._mapPick || 0) === i ? 'on' : ''}" data-mpick="${i}" ${c.z[i].on ? '' : 'disabled'}>Strefa ${i + 1}</button>`).join('')}</div>
-      <div id="mapslot"></div>
       ${zone(0)}${zone(1)}
+      </div><div class="mapcol">
+      <h3>${ico('map')} Mapa</h3>
+      <div class="row small"><span class="mute">Klik w mapę ustawia środek:</span>
+        ${[0, 1].map((i) => `<button class="mini ${(this._mapPick || 0) === i ? 'on' : ''}" data-mpick="${i}" ${c.z[i].on ? '' : 'disabled'}>Strefa ${i + 1}</button>`).join('')}
+        <button class="mini" data-mfit>pokaż strefy</button></div>
+      <div id="mapslot"><slot name="map"></slot></div>
+      <div class="small mute">Przeciągnij kropkę w środku, żeby przesunąć strefę, a uchwyt na krawędzi, żeby zmienić promień.</div>
+      </div></div>
       ${this._saveBar()}
-      <div class="row">${this._confirmDel ? '<span class="small warn">Na pewno usunąć strefy i automatyki z HA?</span><button class="mini" data-delall="yes">Tak, usuń</button><button class="mini" data-delall="no">Nie</button>'
+      <div class="row">${this._confirmDel ? '<span class="small warn">Na pewno usunąć z HA sterownik, strefy i przełącznik wietrzenia?</span><button class="mini" data-delall="yes">Tak, usuń</button><button class="mini" data-delall="no">Nie</button>'
         : '<button class="mini" data-delall="ask">Usuń wszystko z HA</button>'}</div>
     </div>`;
   }
 
-  // ---------------- mapa: wbudowana mapa HA (ha-map) ----------------
+  // ---------------- mapa: wbudowana mapa HA (ha-map) w light DOM karty ----------------
+  // v2.3: mapa siedzi poza przerysowywanym shadow DOM (slot), wiec odswiezenie karty jej nie resetuje
   async _haMapReady() {
     if (customElements.get('ha-map')) return;
-    // ha-map laduje sie z karta Mapa - wymus jej zaladowanie przez helpery kart HA
     if (window.loadCardHelpers) {
       try { const h = await window.loadCardHelpers(); const c = await h.createCardElement({ type: 'map', entities: ['zone.home'] }); if (c) c.hass = this._hass; } catch (e) { /* dalej czekamy */ }
     }
@@ -1314,20 +1614,19 @@ class CompitNanoOneCard extends HTMLElement {
   }
 
   _mountMap() {
-    const slot = this.shadowRoot.querySelector('#mapslot');
-    if (!slot) return;
     if (!this._mapWrap) {
       this._mapWrap = document.createElement('div');
-      this._mapWrap.className = 'mapwrap';
-      this._mapWrap.innerHTML = '<div class="map"><div class="mapErr">Ładuję mapę HA…</div></div>';
+      this._mapWrap.slot = 'map';
+      this._mapWrap.style.cssText = 'display:block;height:360px;border-radius:12px;overflow:hidden;border:1px solid rgba(127,127,127,.35);margin:6px 0 4px;position:relative;';
+      this._mapWrap.innerHTML = '<div style="padding:20px;opacity:.7;font-size:.88em">Ładuję mapę HA…</div>';
+      this.appendChild(this._mapWrap);
     }
-    slot.appendChild(this._mapWrap);
+    if (this._haMap && this._haMap.leafletMap && this._haMap.leafletMap !== this._map) this._bindMap();
     if (this._map) { setTimeout(() => { if (this._map) { this._map.invalidateSize(); this._drawMap(); } }, 0); return; }
     if (this._mapLoading) return;
     this._mapLoading = true;
     (async () => {
       await this._haMapReady();
-      const box = this._mapWrap.querySelector('.map');
       const m = document.createElement('ha-map');
       const dark = this._config.theme !== 'light';
       m.hass = this._hass;
@@ -1336,61 +1635,139 @@ class CompitNanoOneCard extends HTMLElement {
       m.zoom = 15;
       m.themeMode = dark ? 'dark' : 'auto';
       m.darkMode = dark;
-      m.style.height = '100%';
-      box.innerHTML = '';
-      box.appendChild(m);
+      m.style.cssText = 'display:block;height:100%;';
+      this._mapWrap.innerHTML = '';
+      this._mapWrap.appendChild(m);
+      this._haMap = m;
       const t0 = Date.now();
       while (!(m.leafletMap && m.Leaflet)) {
         if (Date.now() - t0 > 10000) throw new Error('mapa HA się nie uruchomiła');
         await new Promise((r) => setTimeout(r, 150));
       }
-      this._L = m.Leaflet;
-      this._map = m.leafletMap;
-      this._mapLayer = this._L.layerGroup().addTo(this._map);
-      this._map.on('click', (e) => this._mapClick(e.latlng));
-      this._mapFitted = false;
-      setTimeout(() => { if (this._map) { this._map.invalidateSize(); this._drawMap(); } }, 50);
+      this._bindMap();
     })().catch((e) => {
-      const box = this._mapWrap.querySelector('.map');
-      if (box) box.innerHTML = `<div class="mapErr">Mapa niedostępna: ${esc(e.message)}. Środek strefy wpisz ręcznie (szer./dł.) albo kliknij „środek = dom”.</div>`;
+      this._mapWrap.innerHTML = `<div style="padding:20px;opacity:.75;font-size:.88em">Mapa niedostępna: ${esc(e.message)}. Środek strefy wpisz ręcznie (szer./dł.) albo kliknij „środek = dom”.</div>`;
       this._pushLog({ t: new Date(), e: 'karta', s: 'Mapa HA: ' + e.message });
     }).finally(() => { this._mapLoading = false; });
   }
 
+  _bindMap() {
+    const m = this._haMap;
+    this._L = m.Leaflet;
+    this._map = m.leafletMap;
+    this._mapLayer = this._L.layerGroup().addTo(this._map);
+    this._map.on('click', (e) => this._mapClick(e.latlng));
+    this._mapFitted = false;
+    setTimeout(() => { if (this._map) { this._map.invalidateSize(); this._drawMap(); } }, 50);
+  }
+
+  _fitMap() {
+    if (!this._map || !this._draft) return;
+    const L = this._L, b = [];
+    this._draft.z.forEach((z) => { if (z.on) b.push(L.latLng(Number(z.lat), Number(z.lon)).toBounds((Number(z.r) || 100) * 2)); });
+    if (!b.length) return;
+    let bb = b[0]; b.slice(1).forEach((x) => { bb = bb.extend(x); });
+    this._map.fitBounds(bb, { padding: [20, 20], maxZoom: 17 });
+    this._mapFitted = true;
+  }
+
   _drawMap() {
     const L = this._L;
-    if (!this._map || !L || !this._draft) return;
+    if (!this._map || !L || !this._draft || this._mapDrag) return;
     this._mapLayer.clearLayers();
     const col = ['#27b4ff', '#ffa43a'];
-    const pts = [];
+    const dot = (c, sz) => L.divIcon({ className: '', iconSize: [0, 0], html: `<div style="width:${sz}px;height:${sz}px;margin:-${sz / 2 + 2}px 0 0 -${sz / 2 + 2}px;border-radius:50%;background:${c};border:2px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.5);cursor:grab"></div>` });
     this._draft.z.forEach((z, i) => {
       if (!z.on) return;
-      const ll = [Number(z.lat), Number(z.lon)];
-      if (isNaN(ll[0]) || isNaN(ll[1])) return;
-      const c = L.circle(ll, { radius: Number(z.r) || 100, color: col[i], weight: 2, fillOpacity: 0.12 }).addTo(this._mapLayer);
-      c.bindTooltip('Strefa ' + (i + 1) + ' · ' + (Number(z.r) || 100) + ' m');
-      L.circleMarker(ll, { radius: 4, color: col[i], fillOpacity: 1 }).addTo(this._mapLayer);
-      pts.push(c.getBounds());
+      const ll = L.latLng(Number(z.lat), Number(z.lon));
+      if (isNaN(ll.lat) || isNaN(ll.lng)) return;
+      const r = Number(z.r) || 100;
+      const circ = L.circle(ll, { radius: r, color: col[i], weight: 2, fillOpacity: 0.12, interactive: false }).addTo(this._mapLayer);
+      const edge = (c, rr) => L.latLng(c.lat, c.lng + rr / (111320 * Math.cos(c.lat * Math.PI / 180)));
+      const cm = L.marker(ll, { draggable: true, icon: dot(col[i], 16), title: 'Strefa ' + (i + 1) + ' – przeciągnij' }).addTo(this._mapLayer);
+      const hm = L.marker(edge(ll, r), { draggable: true, icon: dot('#fff', 12), title: 'promień – przeciągnij' }).addTo(this._mapLayer);
+      hm.bindTooltip(Math.round(r) + ' m', { permanent: true, direction: 'right', offset: [8, 0] });
+      const sync = () => {
+        const R = this.shadowRoot;
+        [['lat', z.lat], ['lon', z.lon], ['r', z.r]].forEach(([k, v]) => { const el = R.querySelector(`[data-bind="z.${i}.${k}"]`); if (el && el !== R.activeElement) el.value = v; });
+      };
+      cm.on('dragstart', () => { this._mapDrag = true; });
+      cm.on('drag', (e) => {
+        const p = e.target.getLatLng();
+        z.lat = Number(p.lat.toFixed(6)); z.lon = Number(p.lng.toFixed(6));
+        circ.setLatLng(p); hm.setLatLng(edge(p, Number(z.r) || 100)); sync();
+      });
+      hm.on('dragstart', () => { this._mapDrag = true; });
+      hm.on('drag', (e) => {
+        const c = L.latLng(Number(z.lat), Number(z.lon));
+        z.r = Math.max(20, Math.round(this._map.distance(c, e.target.getLatLng()) / 5) * 5);
+        circ.setRadius(z.r); hm.setTooltipContent(z.r + ' m'); sync();
+      });
+      const end = () => { this._mapDrag = false; this._render(); };
+      cm.on('dragend', end); hm.on('dragend', end);
     });
     this._draft.phones.forEach((id) => {
       const p = this._phoneInfo(id);
       if (!p.gps) return;
-      L.circleMarker([p.la, p.lo], { radius: 7, color: '#fff', weight: 2, fillColor: p.fresh ? '#3ddc6f' : '#8d9aab', fillOpacity: 1 })
+      L.circleMarker([p.la, p.lo], { radius: 7, color: '#fff', weight: 2, fillColor: p.fresh ? '#3ddc6f' : '#8d9aab', fillOpacity: 1, interactive: true })
         .bindTooltip((p.s.attributes.friendly_name || id) + (p.fresh ? '' : ' (nieaktualny)')).addTo(this._mapLayer);
     });
-    if (!this._mapFitted && pts.length) {
-      this._mapFitted = true;
-      let b = pts[0];
-      pts.slice(1).forEach((x) => { b = b.extend(x); });
-      this._map.fitBounds(b, { padding: [20, 20], maxZoom: 16 });
-    }
+    if (!this._mapFitted) this._fitMap();
   }
 
   _mapClick(ll) {
     const i = this._mapPick || 0, z = this._draft && this._draft.z[i];
-    if (!z || !z.on) return;
+    if (!z || !z.on || this._mapDrag) return;
     z.lat = Number(ll.lat.toFixed(6)); z.lon = Number(ll.lng.toFixed(6));
     this._render();
+  }
+
+  // ---------------- przeciaganie blokow harmonogramu ----------------
+  _wireChart() {
+    const R = this.shadowRoot;
+    R.querySelectorAll('[data-track]').forEach((tr) => tr.addEventListener('click', (ev) => {
+      if (this._dragJust) return;
+      const blk = ev.target.closest('[data-blk]');
+      const di = Number(tr.dataset.track), rect = tr.getBoundingClientRect();
+      const m = Math.max(0, Math.min(1425, Math.round((ev.clientX - rect.left) / rect.width * 1440 / 15) * 15));
+      const add = () => {
+        const src = blk ? this._draft.sched.slots[Number(blk.dataset.blk)] : null;
+        this._draft.sched.slots.push({ d: [DAYS[di][0]], t: this._hm(m), tryb: src ? src.tryb : '', temp: '', pn: '', pw: '' });
+        this._slotEdit = this._draft.sched.slots.length - 1;
+        this._render();
+      };
+      // klik w pusty pasek / blok przeniesiony z dnia wczesniej = nowy wpis; klik w blok = edycja, dwuklik w blok = nowy wpis w tym miejscu
+      if (!blk || blk.classList.contains('carry')) { add(); return; }
+      const now = Date.now();
+      if (this._clk && now - this._clk.t < 350 && this._clk.di === di) { clearTimeout(this._clk.to); this._clk = null; add(); return; }
+      const i = Number(blk.dataset.blk);
+      this._clk = { t: now, di, to: setTimeout(() => { this._clk = null; this._slotEdit = i; this._render(); }, 350) };
+    }));
+    R.querySelectorAll('[data-drag]').forEach((h) => h.addEventListener('pointerdown', (ev) => {
+      ev.stopPropagation(); ev.preventDefault();
+      const i = Number(h.dataset.drag), s = this._draft.sched.slots[i];
+      const tr = h.closest('[data-track]'), rect = tr.getBoundingClientRect();
+      const blk = h.closest('.blk'), lab = blk.querySelector('.bl');
+      const x0 = ev.clientX;
+      let moved = false;
+      h.setPointerCapture(ev.pointerId);
+      const mv = (e) => {
+        if (Math.abs(e.clientX - x0) > 3) moved = true;
+        if (!moved) return;
+        const m = Math.max(0, Math.min(1425, Math.round((e.clientX - rect.left) / rect.width * 1440 / 15) * 15));
+        s.t = this._hm(m);
+        blk.style.left = (m / 1440 * 100) + '%';
+        lab.textContent = s.t + ' ' + this._slotLabel(s);
+        blk.classList.add('drag');
+      };
+      const up = () => {
+        h.removeEventListener('pointermove', mv); h.removeEventListener('pointerup', up); h.removeEventListener('pointercancel', up);
+        if (!moved) this._slotEdit = i;
+        this._dragJust = true; setTimeout(() => { this._dragJust = false; }, 50);
+        setTimeout(() => this._render(), 0);
+      };
+      h.addEventListener('pointermove', mv); h.addEventListener('pointerup', up); h.addEventListener('pointercancel', up);
+    }));
   }
 
   // obsluga zdarzen zakladek Harmonogram / Strefy (wolane z _render)
@@ -1398,7 +1775,7 @@ class CompitNanoOneCard extends HTMLElement {
     const R = this.shadowRoot;
     R.querySelectorAll('[data-bind]').forEach((el) => {
       const upd = () => this._bindSet(el.dataset.bind, el.type === 'checkbox' ? el.checked : el.value);
-      el.addEventListener('input', () => { upd(); if (el.hasAttribute('data-map')) this._drawMap(); });
+      el.addEventListener('input', () => { upd(); if (el.hasAttribute('data-map')) { this._drawMap(); } });
       el.addEventListener('change', () => { upd(); if (/^z\.\d\.on$/.test(el.dataset.bind)) this._mapFitted = false; if (el.hasAttribute('data-rr')) this._render(); });
     });
     R.querySelectorAll('[data-day]').forEach((b) => b.addEventListener('click', () => {
@@ -1415,14 +1792,28 @@ class CompitNanoOneCard extends HTMLElement {
       this._render();
     }));
     R.querySelectorAll('[data-addslot]').forEach((b) => b.addEventListener('click', () => {
-      const sl = this._draft.sched.slots, last = sl[sl.length - 1];
-      sl.push({ d: last ? last.d.slice() : DAYS.map((x) => x[0]).slice(0, 5), t: '06:00', tryb: '', temp: '', pn: '', pw: '' });
+      this._draft.sched.slots.push({ d: DAYS.map((x) => x[0]).slice(0, 5), t: '06:00', tryb: '', temp: '', pn: '', pw: '' });
+      this._slotEdit = this._draft.sched.slots.length - 1;
       this._render();
     }));
-    R.querySelectorAll('[data-delslot]').forEach((b) => b.addEventListener('click', () => { this._draft.sched.slots.splice(Number(b.dataset.delslot), 1); this._render(); }));
+    R.querySelectorAll('[data-sopen]').forEach((b) => b.addEventListener('click', () => { this._slotEdit = Number(b.dataset.sopen); this._render(); }));
+    R.querySelectorAll('[data-sclose]').forEach((b) => b.addEventListener('click', () => { this._slotEdit = null; this._render(); }));
+    R.querySelectorAll('[data-delslot]').forEach((b) => b.addEventListener('click', () => { this._draft.sched.slots.splice(Number(b.dataset.delslot), 1); this._slotEdit = null; this._render(); }));
+    R.querySelectorAll('[data-addrule]').forEach((b) => b.addEventListener('click', () => {
+      this._draft.rules.push({ name: 'Reguła ' + (this._draft.rules.length + 1), on: true, conds: [{ e: '', op: 'on', v: '' }], dpn: 90, dpw: 90, npn: 70, npw: 70, hold: 10 });
+      this._render();
+    }));
+    R.querySelectorAll('[data-delrule]').forEach((b) => b.addEventListener('click', () => { this._draft.rules.splice(Number(b.dataset.delrule), 1); this._render(); }));
+    R.querySelectorAll('[data-addcond]').forEach((b) => b.addEventListener('click', () => { this._draft.rules[Number(b.dataset.addcond)].conds.push({ e: '', op: 'on', v: '' }); this._render(); }));
+    R.querySelectorAll('[data-delcond]').forEach((b) => b.addEventListener('click', () => { const [ri, ci] = b.dataset.delcond.split(':').map(Number); this._draft.rules[ri].conds.splice(ci, 1); this._render(); }));
+    R.querySelectorAll('[data-wbool]').forEach((b) => b.addEventListener('click', () => {
+      const s = this._hass.states[WIET_BOOL]; if (!s) return;
+      this._hass.callService('input_boolean', s.state === 'on' ? 'turn_off' : 'turn_on', { entity_id: WIET_BOOL });
+    }));
     R.querySelectorAll('[data-addph]').forEach((el) => el.addEventListener('change', () => { if (el.value) { this._draft.phones.push(el.value); this._render(); } }));
     R.querySelectorAll('[data-delph]').forEach((b) => b.addEventListener('click', () => { this._draft.phones.splice(Number(b.dataset.delph), 1); this._render(); }));
     R.querySelectorAll('[data-mpick]').forEach((b) => b.addEventListener('click', () => { this._mapPick = Number(b.dataset.mpick); this._render(); }));
+    R.querySelectorAll('[data-mfit]').forEach((b) => b.addEventListener('click', () => this._fitMap()));
     R.querySelectorAll('[data-zhome]').forEach((b) => b.addEventListener('click', () => {
       const z = this._draft.z[Number(b.dataset.zhome)], h = this._hass.config || {};
       if (h.latitude) { z.lat = h.latitude; z.lon = h.longitude; this._mapFitted = false; this._render(); }
@@ -1432,7 +1823,8 @@ class CompitNanoOneCard extends HTMLElement {
       const v = b.dataset.delall;
       if (v === 'ask') { this._confirmDel = true; this._render(); } else if (v === 'no') { this._confirmDel = false; this._render(); } else this._deleteAll();
     }));
-    if (this._tab === 'strefy') this._mountMap();
+    if (this._tab === 'harmonogram' && this._draft) this._wireChart();
+    if (this._tab === 'strefy' && this._draft) this._mountMap();
   }
 
   // ---------------- zakladka Rekuperator ----------------
@@ -1473,10 +1865,13 @@ class CompitNanoOneCard extends HTMLElement {
       + ['zad_nawiew', 'zad_wywiew', 'aero_moc'].map((k) => opt(k, 0)).join('');
     return `
       ${this._sbBar()}
+      <div class="rk"><div class="ca">
       ${this._renderHero(bypassOn)}
       ${this._renderGauge()}
       ${this._renderBar()}
+      </div><div class="cc">
       ${this._renderControls()}
+      </div><div class="cb">
       <div class="flags">${optFlag('harm_akt')}${optFlag('went_aktywna')}${flag('bypass')}${optFlag('bypass_tryb')}${optFlag('sezon')}${optFlag('chlodzenie')}${optFlag('wietrzenie')}${optFlag('urlop')}${optFlag('poza_domem')}${optFlag('nagrzewnica')}${optFlag('rozmrazanie')}${optFlag('gwc')}${optFlag('kominek')}${optFlag('magistrala')}
         ${filtr ? `<span class="flag ${filtrWarn ? 'err' : ''}" data-e="${esc(this._id('filtr'))}">Filtry: ${!BAD.includes(filtr.state) ? esc(filtr.state) : '—'}</span>` : ''}</div>
       <div class="grid">
@@ -1491,6 +1886,7 @@ class CompitNanoOneCard extends HTMLElement {
       </div>
       ${nast ? `<h3 class="rest">Nastawy</h3><div class="grid">${nast}</div>` : ''}
       ${restTiles ? `<h3 class="rest">Pozostałe z ESP (${rest.length})</h3><div class="grid">${restTiles}</div>` : ''}
+      </div></div>
       <div class="effnote">Sprawność odzysku = (nawiew − czerpnia) / (wywiew − czerpnia)${eff === null ? ': ' + (() => { const miss = [['t_czerpnia', 'czerpni'], ['t_nawiew', 'nawiewu'], ['t_wywiew', 'wywiewu']].filter(([k]) => num(this._st(k)) === null).map(([, n]) => n); return miss.length ? 'brak czujnika ' + miss.join(', ') : 'za mała różnica temperatur'; })() : ': <b>' + Math.round(eff) + '%</b>'}</div>
       ${missing === REKU_KEYS.length ? `<div class="warnbox">Nie widzę żadnej encji z prefiksem <code>${esc(this._prefix)}</code>. Sprawdź <code>prefix:</code> w karcie albo listę encji w zakładce Diagnostyka.</div>` : ''}`;
   }
@@ -1610,6 +2006,7 @@ class CompitNanoOneCard extends HTMLElement {
       </div>
       ${this._missingBox()}
       ${(() => { const d = this._dupes(); return d.length ? `<div class="warnbox">W HA są zdublowane encje z końcówką _2/_3 (stare zostały w rejestrze po zmianie nazw w YAML): ${d.map((x) => `<code>${esc(x)}</code>`).join(' ')}. Karta bierze tę, która ma dane. Stare, nieaktywne usuniesz w HA: Ustawienia → Urządzenia → Encje.</div>` : ''; })()}
+      <div class="dgrid">
       <div class="sec"><h3>ESP</h3>${espTbl}</div>
       <div class="sec"><h3>Magistrala RS485 / C14</h3>${busTbl}</div>
       <div class="sec">
@@ -1624,6 +2021,7 @@ class CompitNanoOneCard extends HTMLElement {
       <div class="sec"><h3>Encje <code>${esc(pre)}*</code> (${all.length})</h3>
         ${all.length ? `<table class="kv all">${allTbl}</table>` : '<div class="mute">Brak encji z tym prefiksem.</div>'}
         ${missing.length ? `<details><summary>Karta szuka, a nie ma (${missing.length})</summary><div class="miss">${missing.join(' ')}</div><div class="mute">Możesz je podpiąć w <code>entities:</code> w konfiguracji karty.</div></details>` : ''}
+      </div>
       </div>`;
   }
 
@@ -1978,6 +2376,58 @@ const CSS = `
   .sbbar > div { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; }
   .mapwrap .map ha-map { display:block; height:100%; }
   .tabs { overflow-x:auto; scrollbar-width:none; } .tab { white-space:nowrap; }
+  /* v2.3 uklad na szerokim ekranie (panel w lewym pasku) */
+  .body { container-type:inline-size; }
+  .hero { max-width:520px; margin-left:auto; margin-right:auto; }
+  .rk .ca, .rk .cb, .rk .cc { min-width:0; }
+  @container (min-width: 900px) {
+    .rk { display:grid; grid-template-columns:minmax(380px, 520px) minmax(0, 1fr); gap:6px 22px; align-items:start; }
+    .rk .ca { grid-column:1; grid-row:1 / span 2; }
+    .rk .cb { grid-column:2; grid-row:1; }
+    .rk .cc { grid-column:2; grid-row:2; }
+    .rk .grid { grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); }
+    .dgrid { columns:2 440px; column-gap:18px; }
+    .dgrid > .sec { break-inside:avoid; }
+    .zgrid { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:18px; align-items:start; }
+    .zgrid .mapcol { position:sticky; top:8px; }
+    .pgrid { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:22px; align-items:start; }
+  }
+  @container (min-width: 1500px) {
+    .rk { grid-template-columns:520px minmax(0, 1fr) minmax(0, 1fr); }
+    .rk .ca { grid-row:1; } .rk .cb { grid-column:2; grid-row:1; } .rk .cc { grid-column:3; grid-row:1; }
+    .rk .cc .ctl { margin-top:0; }
+    .dgrid { columns:3 420px; }
+  }
+  /* v2.3 wykres harmonogramu */
+  .wk { margin:6px 0 4px; user-select:none; }
+  .wrow { display:grid; grid-template-columns:30px 1fr; align-items:center; gap:6px; margin:3px 0; }
+  .wday { font-size:.8em; font-weight:700; color:var(--secondary-text-color); text-align:center; }
+  .wday.on { color:var(--primary-color); }
+  .whead .wtrack0 { position:relative; height:14px; font-size:.68em; color:var(--secondary-text-color); }
+  .whead .wtrack0 span { position:absolute; transform:translateX(-50%); }
+  .whead .wtrack0 span:first-child { transform:none; } .whead .wtrack0 span:last-child { transform:translateX(-100%); }
+  .wtrack { position:relative; height:36px; border-radius:8px; cursor:copy; overflow:hidden;
+    background:repeating-linear-gradient(90deg, transparent 0, transparent calc(100% / 24 - 1px), var(--divider-color) calc(100% / 24 - 1px), var(--divider-color) calc(100% / 24)), var(--secondary-background-color); }
+  .nband { position:absolute; top:0; bottom:0; background:rgba(80,90,160,.22); pointer-events:none; }
+  .blk { position:absolute; top:4px; bottom:4px; border-radius:6px; background:color-mix(in srgb, var(--bc) 30%, transparent); border:1px solid var(--bc); color:var(--primary-text-color); cursor:pointer; overflow:hidden; box-sizing:border-box; }
+  .blk.carry { opacity:.45; border-style:dashed; cursor:copy; }
+  .blk.sel { box-shadow:0 0 0 2px var(--primary-text-color); }
+  .blk.drag { box-shadow:0 0 0 2px var(--bc); z-index:3; }
+  .blk .bl { position:absolute; left:10px; right:2px; top:50%; transform:translateY(-50%); font-size:.72em; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
+  .blk .bh { position:absolute; left:0; top:0; bottom:0; width:8px; background:var(--bc); cursor:ew-resize; touch-action:none; }
+  .cmark { position:absolute; top:0; width:2px; height:7px; background:#e2c044; pointer-events:none; z-index:2; }
+  .nowline { position:absolute; top:-2px; bottom:-2px; width:2px; background:#ff4d4f; box-shadow:0 0 6px #ff4d4f; pointer-events:none; z-index:4; }
+  .legend { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:.78em; color:var(--secondary-text-color); margin:6px 0; }
+  .legend i { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:5px; vertical-align:-2px; }
+  .legend .lg-night { background:rgba(80,90,160,.5); } .legend .lg-cyc { background:#e2c044; width:3px; } .legend .lg-now { background:#ff4d4f; width:3px; }
+  .sedit, .rule { border:1px solid var(--divider-color); border-radius:12px; padding:10px 12px; margin:8px 0; background:var(--secondary-background-color); }
+  .sedit { border-color:var(--primary-color); }
+  .lrow { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:4px 0; border-bottom:1px solid var(--divider-color); font-size:.88em; }
+  .dot2 { width:10px; height:10px; border-radius:3px; }
+  details.lst { margin:6px 0 4px; }
+  .plan input.lg { width:230px; }
+  .nowl { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:.88em; padding:7px 12px; border-radius:10px; background:var(--secondary-background-color); margin:0 0 8px; }
+  .zgrid h3, .pgrid h3 { margin-top:4px; }
 `;
 
 if (!customElements.get('compit-nano-one-card')) customElements.define('compit-nano-one-card', CompitNanoOneCard);
