@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v2.12
+ * compit-nano-one-card  v2.13
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -21,7 +21,7 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v2.12';
+const VERSION = 'v2.13';
 // v2.4: Leaflet z unpkg jako zapas, gdy mapa HA (ha-map) nie wstanie
 // v2.6: kilka CDN po kolei, podklad OpenStreetMap bez klucza API
 const LEAFLET_CDN = ['https://unpkg.com/leaflet@1.9.4/dist/', 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/'];
@@ -32,6 +32,9 @@ let LEAFLET_P = null;
 const AUTO_IDS = ['compit_rekuperacja_sterownik'];
 const OLD_IDS = ['compit_rekuperacja_harmonogram', 'compit_rekuperacja_strefa_1', 'compit_rekuperacja_strefa_2']; // v1.9-v2.2, kasowane przy zapisie
 const WIET_BOOL = 'input_boolean.rekuperacja_wietrzenie';
+const TXT_PRZED = 'input_text.rekuperacja_tryb_przed'; // v2.13: tryb sprzed wietrzenia (przywracany po koncu)
+const END_ID = 'compit_rekuperacja_koniec_wietrzenia'; // v2.13: automatyka-straznik konca wietrzenia (dziala zawsze, tez bez Strefy)
+const AIR_SRC = ['wietrzenie z przycisku', 'wietrzenie', 'wietrzenie po wyjeździe'];
 const TIMER = 'script.wietrzenie_timer'; // v2.12: jedna encja do wlasnej karty - skrypt chodzi X min = wietrzenie trwa
 const WIET_BTN = 'input_button.rekuperacja_wietrzenie_teraz';       // v2.9-v2.11, kasowane przy zapisie
 const BTN_BOOL = 'input_boolean.rekuperacja_wietrzenie_przycisk';   // v2.10-v2.11, kasowane przy zapisie
@@ -447,7 +450,7 @@ class CompitNanoOneCard extends HTMLElement {
     // v1.4: HA podaje nowe hass przy KAZDEJ zmianie dowolnej encji w domu. Przerysowuj tylko,
     // gdy zmienila sie ktoras encja z prefiksem - inaczej animacje skacza, a klik potrafi przepasc.
     const zid = this._zewnId();   // v1.8: zmiana BT1 z pompy tez przerysowuje
-    const ids = this._idx().concat(zid ? [zid] : [], autos, [WIET_BOOL, WYJ_BOOL, LATO_BOOL, TIMER], (this._tab === 'strefy' || this._tab === 'harmonogram') && this._draft ? this._draft.phones.concat(this._draft.trg.le, this._draft.trg.we) : []);
+    const ids = this._idx().concat(zid ? [zid] : [], autos, [WIET_BOOL, WYJ_BOOL, LATO_BOOL, TIMER, TXT_PRZED], (this._tab === 'strefy' || this._tab === 'harmonogram') && this._draft ? this._draft.phones.concat(this._draft.trg.le, this._draft.trg.we) : []);
     const changed = first || !this._seen || ids.length !== this._seen.size || ids.some((id) => this._seen.get(id) !== hass.states[id]);
     if (!changed) return;
     this._seen = new Map(ids.map((id) => [id, hass.states[id]]));
@@ -575,7 +578,8 @@ class CompitNanoOneCard extends HTMLElement {
     }));
     if (this._tab === 'harmonogram' || this._tab === 'strefy') { this._loadCfg(); this._wirePlan(); }
     this.shadowRoot.querySelectorAll('[data-wnow]').forEach((b) => b.addEventListener('click', () => {
-      if (this._hass.states[TIMER]) this._hass.callService('script', 'turn_on', { entity_id: TIMER });
+      if (!this._hass.states[TIMER]) { this._flashMsg(false, 'Najpierw kliknij „Zapisz w HA” w Strefach (brak ' + TIMER + ')'); return; }
+      this._hass.callService('script', 'turn_on', { entity_id: TIMER });
       this._flashMsg(true, '✓ Wietrzenie teraz');
     }));
     this.shadowRoot.querySelectorAll('[data-wstop]').forEach((b) => b.addEventListener('click', () => {
@@ -907,7 +911,8 @@ class CompitNanoOneCard extends HTMLElement {
     if (on && left !== null && !this._wietTick) this._wietTick = setTimeout(() => { this._wietTick = null; this._schedule(); }, 30000);
     const end = on && min ? new Date(new Date(bb.attributes.last_triggered || bb.last_changed).getTime() + min * 60000) : null;
     return `<div class="row"><button class="opt ${on ? 'on' : ''}" data-wnow>${ico('wind')} Wietrzenie teraz${on ? ` – trwa${left !== null ? ', zostało ' + left + ' min (do ' + pad2(end.getHours()) + ':' + pad2(end.getMinutes()) + ')' : ''}` : ''}</button>
-      ${on ? '<button class="mini" data-wstop>przerwij</button>' : ''}</div>`;
+      ${on ? '<button class="mini" data-wstop>przerwij</button>' : ''}</div>
+      ${on ? `<div class="small mute">po wietrzeniu wróci do: ${esc((() => { const pv = (this._hass.states[TXT_PRZED] || {}).state; return pv && !['unknown', 'unavailable'].includes(pv) ? pv : 'trybu ze Stref / harmonogramu'; })())}</div>` : ''}`;
   }
 
   _flashBox() {
@@ -1292,7 +1297,78 @@ class CompitNanoOneCard extends HTMLElement {
       t += `{% if out.t is none %}{% set E = ${c.sez.on ? `(${this._jl(EL.length ? EL : EZ)} if is_state('${LATO_BOOL}', 'on') else ${this._jl(EZ.length ? EZ : EL)})` : this._jl(E)} %}{% set wm = now().weekday() * 1440 + mins %}{% set sn = namespace(s=E[-1]) %}`
         + `{% for e in E %}{% if e[0] <= wm %}{% set sn.s = e %}{% endif %}{% endfor %}{% set out.t = sn.s[1] %}{% endif %}`;
     }
-    return t + `{% endif %}{{ out.t }}`;
+    return t + `{% endif %}{{ out.t if out.t is mapping else {'src': 'nic'} }}`;
+  }
+
+  // v2.13: tabela powrotu po wietrzeniu: opcja trybu -> cel (z % biegu z bazy)
+  _backTbl(W) {
+    const R = {};
+    W.opts.filter((o) => o !== W.wietOpt).forEach((o) => { R[o] = this._tgt(W, 'powrót po wietrzeniu', o); });
+    return R;
+  }
+  _backDef(W) { return this._gearOpt(W, 1) || W.opts.find((o) => o !== W.wietOpt) || null; }
+
+  // v2.13: zapamietanie trybu przed wietrzeniem (tylko gdy pusto i obecny tryb to nie wietrzenie)
+  _saveSeq(W) {
+    if (!W.sel) return [];
+    return [{ if: [{ condition: 'template', value_template: `{{ states('${TXT_PRZED}') == '' and states('${W.sel}') in ${this._jl(Object.keys(this._backTbl(W)))} }}` }],
+      then: [{ service: 'input_text.set_value', target: { entity_id: TXT_PRZED }, data: { value: `{{ states('${W.sel}') }}` }, continue_on_error: true }] }];
+  }
+
+  // v2.13: przywrocenie trybu sprzed wietrzenia + wylaczenie wietrzenia w ESP (po stronie serwera HA)
+  _restoreSeq(W) {
+    const seq = [];
+    if (W.sel) {
+      const R = this._backTbl(W), def = this._backDef(W);
+      seq.push({ variables: { cr: `{% set R = ${this._jl(R)} %}{% set pv = states('${TXT_PRZED}') %}{% if pv in R %}{{ R[pv] }}{% elif ${this._jl(!!(W.wietOpt && def))} and states('${W.sel}') == ${this._jl(W.wietOpt || '')} %}{{ R[${this._jl(def || '')}] }}{% else %}{{ none }}{% endif %}` } });
+      const inner = [
+        ...this._lockSeq(W),
+        { if: [{ condition: 'template', value_template: `{{ cr.tryb != '' and states('${W.sel}') != cr.tryb }}` }], then: [{ service: 'select.select_option', target: { entity_id: W.sel }, data: { option: '{{ cr.tryb }}' } }] },
+        { if: [{ condition: 'template', value_template: '{{ cr.n is string and cr.pn is number }}' }], then: [{ service: 'number.set_value', target: { entity_id: '{{ cr.n }}' }, data: { value: '{{ cr.pn }}' } }] },
+        { if: [{ condition: 'template', value_template: '{{ cr.w is string and cr.pw is number }}' }], then: [{ service: 'number.set_value', target: { entity_id: '{{ cr.w }}' }, data: { value: '{{ cr.pw }}' } }] },
+      ];
+      seq.push({ if: [{ condition: 'template', value_template: '{{ cr is mapping }}' }], then: inner });
+      // bez opcji "wietrzenie" wietrzenie idzie biegiem z wlasnymi % - po koncu wracaja % tego biegu z bazy
+      const bo = W.wietOpt ? null : R[this._gearOpt(W, this._draft.boost) || ''];
+      if (bo && bo.n && bo.pn !== null) seq.push({ service: 'number.set_value', target: { entity_id: bo.n }, data: { value: bo.pn } });
+      if (bo && bo.w && bo.pw !== null) seq.push({ service: 'number.set_value', target: { entity_id: bo.w }, data: { value: bo.pw } });
+    }
+    if (W.wietSw) seq.push({ if: [{ condition: 'state', entity_id: W.wietSw, state: 'on' }], then: [...this._lockSeq(W), { service: 'switch.turn_off', target: { entity_id: W.wietSw } }] });
+    seq.push({ if: [{ condition: 'template', value_template: `{{ states('${TXT_PRZED}') not in ['', 'unknown', 'unavailable'] }}` }],
+      then: [{ service: 'input_text.set_value', target: { entity_id: TXT_PRZED }, data: { value: '' }, continue_on_error: true }] });
+    return seq;
+  }
+
+  // v2.13: straznik konca wietrzenia - automatyka w HA, wlaczona zawsze (niezalezna od Strefy i od karty)
+  _genEnd() {
+    const W = this._wt();
+    return {
+      id: END_ID, alias: 'Rekuperacja – koniec wietrzenia',
+      description: 'Utworzone przez kartę compit-nano-one-card. Po końcu wietrzenia (Wietrzenie timer, wjazd, wyjazd), także po „przerwij” i po restarcie HA, przywraca tryb sprzed wietrzenia (input_text.rekuperacja_tryb_przed) i wyłącza wietrzenie w ESP. Zmieniaj w karcie.',
+      mode: 'single', max_exceeded: 'silent',
+      trigger: [
+        { platform: 'time_pattern', minutes: '/1' },
+        { platform: 'homeassistant', event: 'start' },
+        { platform: 'state', entity_id: [TIMER, WIET_BOOL, WYJ_BOOL], to: 'off' },
+      ],
+      condition: [
+        { condition: 'template', value_template: `{{ not is_state('${TIMER}', 'on') and not is_state('${WIET_BOOL}', 'on') and not is_state('${WYJ_BOOL}', 'on') }}` },
+        { condition: 'template', value_template: `{{ states('${TXT_PRZED}') not in ['', 'unknown', 'unavailable'] }}` },
+      ],
+      action: this._restoreSeq(W),
+    };
+  }
+
+  async _ensureTxt() {
+    if (!this._hass.states[TXT_PRZED]) {
+      let list = [];
+      try { list = await this._hass.callWS({ type: 'input_text/list' }) || []; } catch (e) { list = []; }
+      if (!list.some((x) => x.id === TXT_PRZED.split('.')[1] || x.name === 'Rekuperacja tryb przed')) {
+        await this._hass.callWS({ type: 'input_text/create', name: 'Rekuperacja tryb przed', icon: 'mdi:history', min: 0, max: 255 });
+        this._pushLog({ t: new Date(), e: 'karta', s: 'Dodano ' + TXT_PRZED });
+      }
+    }
+    try { await this._hass.callWS({ type: 'config/entity_registry/update', entity_id: TXT_PRZED, hidden_by: 'user' }); } catch (e) { /* zostaje widoczny */ }
   }
 
   _lockSeq(W) {
@@ -1368,14 +1444,16 @@ class CompitNanoOneCard extends HTMLElement {
       ...expire,
       { variables: { t: this._ctlTpl(W) } },
       { condition: 'template', value_template: '{{ t is mapping }}' },
+      // v2.13: przy wietrzeniu zapamietaj tryb sprzed (przywraca automatyka "koniec wietrzenia")
+      { if: [{ condition: 'template', value_template: `{{ t.src in ${this._jl(AIR_SRC)} }}` }], then: this._saveSeq(W).length ? this._saveSeq(W) : [{ variables: {} }] },
       { variables: {
         dn: "{{ t.n is string and t.pn is number and ((states(t.n) | float(-999)) - t.pn) | abs > 0.4 }}",
         dw: "{{ t.w is string and t.pw is number and ((states(t.w) | float(-999)) - t.pw) | abs > 0.4 }}",
         dm: W.sel ? `{{ t.tryb is string and t.tryb != '' and states('${W.sel}') != t.tryb }}` : '{{ false }}',
         dt: "{{ t.tid is string and t.temp is number and ((states(t.tid) | float(-999)) - t.temp) | abs > 0.05 }}",
       } },
-      { condition: 'template', value_template: '{{ dn or dw or dm or dt }}' },
-      ...this._lockSeq(W),
+      // v2.13: bez warunku stopujacego - wylaczenie wietrzenia w ESP nizej musi poleciec zawsze
+      ...(this._lockSeq(W).length ? [ifDo('{{ dn or dw or dm or dt }}', this._lockSeq(W))] : []),
       ifDo('{{ dn }}', [{ service: 'number.set_value', target: { entity_id: '{{ t.n }}' }, data: { value: '{{ t.pn }}' } }]),
       ifDo('{{ dw }}', [{ service: 'number.set_value', target: { entity_id: '{{ t.w }}' }, data: { value: '{{ t.pw }}' } }]),
       ifDo('{{ dt }}', [{ service: 'number.set_value', target: { entity_id: '{{ t.tid }}' }, data: { value: '{{ t.temp }}' } }]),
@@ -1383,7 +1461,7 @@ class CompitNanoOneCard extends HTMLElement {
     if (W.sel) action.push(ifDo('{{ dm }}', [{ service: 'select.select_option', target: { entity_id: W.sel }, data: { option: '{{ t.tryb }}' } }]));
     if (W.wietSw) {
       action.push(ifDo(`{{ t.src == 'wietrzenie' and not is_state('${W.wietSw}', 'on') }}`, [{ service: 'switch.turn_on', target: { entity_id: W.wietSw } }]));
-      action.push(ifDo(`{{ t.src != 'wietrzenie' and is_state('${W.wietSw}', 'on') }}`, [{ service: 'switch.turn_off', target: { entity_id: W.wietSw } }]));
+      action.push(ifDo(`{{ t.src != 'wietrzenie' and is_state('${W.wietSw}', 'on') }}`, [...this._lockSeq(W), { service: 'switch.turn_off', target: { entity_id: W.wietSw } }]));
     }
     return {
       id: AUTO_IDS[0], alias: 'Rekuperacja – sterownik',
@@ -1425,8 +1503,18 @@ class CompitNanoOneCard extends HTMLElement {
     await this._hass.callApi('POST', 'config/script/config/' + TIMER.split('.')[1], {
       alias: 'Wietrzenie timer', icon: 'mdi:fan', mode: 'restart',
       description: `Utworzone przez kartę compit-nano-one-card. Wywołanie = wietrzenie przez ${min} min z % ze Stref („Wietrzenie z przycisku”), potem samo się kończy. Ponowne wywołanie liczy od nowa. Zmieniaj w karcie.`,
-      sequence: [{ delay: { minutes: min } }],
+      sequence: this._timerSeq(cfg, min),
     });
+  }
+
+  // v2.13: skrypt sam wlacza wietrzenie (dziala tez bez Strefy), czeka X min i przywraca tryb
+  _timerSeq(cfg, min) {
+    const W = this._wt(), b = this._btnTgt(W), seq = [...this._saveSeq(W), ...this._lockSeq(W)];
+    if (W.sel && b.tryb) seq.push({ if: [{ condition: 'template', value_template: `{{ states('${W.sel}') != ${this._jl(b.tryb)} }}` }], then: [{ service: 'select.select_option', target: { entity_id: W.sel }, data: { option: b.tryb } }] });
+    if (b.n && b.pn !== null) seq.push({ service: 'number.set_value', target: { entity_id: b.n }, data: { value: b.pn } });
+    if (b.w && b.pw !== null) seq.push({ service: 'number.set_value', target: { entity_id: b.w }, data: { value: b.pw } });
+    seq.push({ delay: { minutes: min } });
+    return seq.concat(this._restoreSeq(W));
   }
 
   // v2.12: sprzatanie encji z v2.9-v2.11 i ukrycie wewnetrznych przelacznikow
@@ -1476,6 +1564,7 @@ class CompitNanoOneCard extends HTMLElement {
         } else if (ex) await this._hass.callWS({ type: 'zone/delete', zone_id: ex.id });
       }
       await this._ensureWietBool();
+      await this._ensureTxt();
       await this._ensureTimer(cfg);
       done.push('Wietrzenie timer (' + TIMER + ')');
       if (cfg.wyj.on) { await this._ensureWyjBool(); done.push('przełącznik wietrzenia po wyjeździe'); }
@@ -1495,6 +1584,9 @@ class CompitNanoOneCard extends HTMLElement {
       const a = this._genCtl();
       await this._hass.callApi('POST', 'config/automation/config/' + a.id, a);
       this._autoExists[a.id] = true;
+      const ae = this._genEnd();
+      await this._hass.callApi('POST', 'config/automation/config/' + ae.id, ae);
+      done.push('koniec wietrzenia');
       await this._cleanupOld();
       done.push('sterownik');
       for (const id of OLD_IDS) if (this._autoExists[id]) await this._delAuto(id);
@@ -1511,7 +1603,7 @@ class CompitNanoOneCard extends HTMLElement {
   async _deleteAll() {
     this._confirmDel = false;
     if (!this._isAdmin()) return;
-    for (const id of AUTO_IDS.concat(OLD_IDS)) await this._delAuto(id);
+    for (const id of AUTO_IDS.concat(OLD_IDS, [END_ID])) await this._delAuto(id);
     try {
       const zones = await this._hass.callWS({ type: 'zone/list' }) || [];
       for (const z of zones.filter((x) => /^Rekuperacja [12]$/.test(x.name))) await this._hass.callWS({ type: 'zone/delete', zone_id: z.id });

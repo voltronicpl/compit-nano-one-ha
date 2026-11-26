@@ -87,6 +87,8 @@ tap_action:
 
 W automatyzacji: `action: script.turn_on` z `target: {entity_id: script.wietrzenie_timer}`.
 
+**Koniec wietrzenia po stronie HA (v2.13):** skrypt sam włącza wietrzenie (działa też bez Strefy i bez otwartej karty), zapamiętuje tryb sprzed wietrzenia w ukrytym `input_text.rekuperacja_tryb_przed`, po czasie przywraca ten tryb i % biegu, a `switch.nano_one_wietrzenie` wyłącza. Do tego automatyka **„Rekuperacja – koniec wietrzenia”** (zawsze włączona) co minutę, po „przerwij” i po restarcie HA sprawdza, czy wietrzenie się skończyło, i jak tryb nie wrócił, przywraca go.
+
 **Lewy pasek:** przy każdym otwarciu (konto administratora) karta sprawdza, czy w HA jest panel **Rekuperacja** (`/rekuperacja-nano`) z tą kartą na cały ekran, i jak go nie ma, zakłada go sama. Jak HA odmówi, na górze zakładki Rekuperator jest pasek z przyciskiem, błędem z HA i instrukcją do dodania ręcznie. Wyłączysz to opcją `sidebar: false`.
 
 Mapa w Strefach to od v2.6 **OpenStreetMap bez żadnego klucza API** (biblioteka Leaflet 1.9.4 wbudowana w plik karty od v2.7, bez CDN; internet potrzebny tylko na kafelki mapy z tile.openstreetmap.org). W ciemnym motywie podkład jest przyciemniony. Klik w mapę stawia znacznik środka wybranej strefy (przyciski Strefa 1 / Strefa 2 nad mapą) i rysuje okrąg z promieniem. Opcje karty: `map: ha` = stara mapa HA (ha-map), `map_tiles: <adres>` = własny podkład. Jak mapa nie wstanie, karta pisze dlaczego, a środek strefy wpisujesz ręcznie.
@@ -250,6 +252,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v2.13** – wietrzenie kończy się na serwerze HA: skrypt sam włącza wietrzenie i po czasie przywraca tryb sprzed (`input_text.rekuperacja_tryb_przed`), automatyka „Rekuperacja – koniec wietrzenia” pilnuje końca także po „przerwij” i restarcie HA; sterownik zawsze wyłącza `switch.nano_one_wietrzenie` po wietrzeniu (wcześniej mógł to pominąć).
 - **v2.12** – jedna encja do wietrzenia: `script.wietrzenie_timer` („Wietrzenie timer”), wywołanie włącza wietrzenie na czas ze Stref i samo gaśnie, ponowne liczy od nowa; usunięte `input_button.rekuperacja_wietrzenie_teraz` i `input_boolean.rekuperacja_wietrzenie_przycisk`, schowane wewnętrzne przełączniki wietrzenia.
 - **v2.11** – wietrzenia (przycisk, wjazd, wyjazd) gasną po czasie niezawodnie: sterownik co minutę liczy czas od włączenia zamiast licznika „for:”, który HA gubił przy przeładowaniu; przełącznik `input_boolean.rekuperacja_wietrzenie_przycisk` nazywa się w HA „Wietrzenie” i jest gotowym przyciskiem, który sam gaśnie; w karcie godzina końca wietrzenia.
 - **v2.10** – wietrzenie z przycisku ma własny czas i % (Strefy → Wietrzenie z przycisku), osobny przełącznik `input_boolean.rekuperacja_wietrzenie_przycisk`, działa też gdy nikogo nie ma i ma pierwszeństwo.
