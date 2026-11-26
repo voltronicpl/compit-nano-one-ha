@@ -64,9 +64,9 @@ Ustawienia karty są zapisane w samych automatykach, więc w każdej przeglądar
 - Telefon, który nie raportował dłużej niż „Nieaktualny po” (domyślnie 30 min), się nie liczy. 0 wyłącza to sprawdzanie. Jak telefon w domu długo milczy i HA przełącza tryb bez powodu, daj 0.
 - Wietrzenie wymaga YAML z opcją „Wietrzenie” w „Ustaw tryb” albo przełącznikiem `switch.<prefix>_wietrzenie`. Bez tego wjazd od razu ustawia tryb normalny. Po wgraniu nowego YAML kliknij Zapisz jeszcze raz.
 
-**Pasek boczny:** przy pierwszym otwarciu (konto administratora) karta dodaje panel **Rekuperacja** (`/rekuperacja-nano`) w pasku bocznym z tą kartą na cały ekran. Wyłączysz to opcją `sidebar: false`. W zakładce Harmonogram jest przycisk „Dodaj / sprawdź”.
+**Lewy pasek:** przy każdym otwarciu (konto administratora) karta sprawdza, czy w HA jest panel **Rekuperacja** (`/rekuperacja-nano`) z tą kartą na cały ekran, i jak go nie ma, zakłada go sama. Jak HA odmówi, na górze zakładki Rekuperator jest pasek z przyciskiem, błędem z HA i instrukcją do dodania ręcznie. Wyłączysz to opcją `sidebar: false`.
 
-Mapa to Leaflet z unpkg.com i kafelki OpenStreetMap, więc przeglądarka potrzebuje internetu. Bez niego środek strefy wpisujesz ręcznie.
+Mapa w Strefach to wbudowana mapa HA (ta sama co w karcie Mapa, z tym samym podkładem). Jak się nie załaduje, karta pisze dlaczego, a środek strefy wpisujesz ręcznie.
 
 ## Instalacja przez HACS
 
@@ -209,6 +209,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v2.2** – panel w lewym pasku sprawdzany przy każdym otwarciu, pasek z przyciskiem „Dodaj Rekuperację do lewego paska”, błędem z HA i instrukcją ręczną; mapa w Strefach z HA (ha-map) zamiast unpkg / OpenStreetMap.
 - **v2.1** – wiatraczki i przepływ kręcą się z prędkością wentylatorów: nawiew z `wentylator_nawiewu`, wywiew z `wentylator_wywiewu` (0 % = stoi), zmiana % płynnie przyspiesza / zwalnia, animacja nie zaczyna się od nowa przy odświeżeniu karty.
 - **v2.0** – v1.8 (kafel Na zewnątrz z pompy BT1) + v1.9 (pasek boczny, Harmonogram, Strefy) razem w jednej wersji.
 - **v1.9** – panel Rekuperacja w pasku bocznym, zakładka Harmonogram (tygodniowy, tworzy automatykę w HA), zakładka Strefy (telefony, mapa z okręgami, strefa 1 + opcjonalna strefa 2, wjazd = wietrzenie X min i tryb normalny, wyjazd = przywrócenie % i tryb wyjazdu), w Sterowaniu linia „ostatnio sterowało”, wyzwolenia automatyk w logu.

@@ -1,5 +1,5 @@
 /*
- * compit-nano-one-card  v2.1
+ * compit-nano-one-card  v2.2
  * Karta Home Assistant dla rekuperacji sterowanej przez Compit Nano One (RS485, protokol C14),
  * czytanej przez ESP z ESPHome. Jeden plik, bez zaleznosci.
  *
@@ -7,7 +7,7 @@
  *   prefix: nano_one          # opcjonalnie, poczatek ID encji z ESPHome (domyslnie nano_one)
  *   title: Rekuperacja        # opcjonalnie
  *   tab: rekuperator          # opcjonalnie, zakladka startowa: rekuperator | harmonogram | strefy | diagnostyka
- *   sidebar: false            # opcjonalnie, nie tworz panelu "Rekuperacja" w pasku bocznym
+ *   sidebar: false            # opcjonalnie, nie tworz panelu "Rekuperacja" w lewym pasku i nie pokazuj paska z przyciskiem
  *   theme: dark               # opcjonalnie: dark (domyslnie, wg wzoru) | light (kolory motywu HA)
  *   niepewne: [t_czerpnia]    # opcjonalnie, klucze oznaczane "?" (niepewne mapowanie); domyslnie zadne
  *   history_hours: 6          # opcjonalnie, ile godzin wstecz czytac log i ramki w Diagnostyce
@@ -19,13 +19,11 @@
  * Jesli encji nie ma w podanej domenie, karta szuka tej samej koncowki w innych domenach.
  */
 (() => {
-const VERSION = 'v2.1';
+const VERSION = 'v2.2';
 // v1.9: automatyki i strefy tworzone przez karte, panel w pasku bocznym
 const AUTO_IDS = ['compit_rekuperacja_harmonogram', 'compit_rekuperacja_strefa_1', 'compit_rekuperacja_strefa_2'];
 const LS_CFG = 'compit-nano-one-plan';
-const LS_SB = 'compit-nano-one-sidebar';
 const SB_URL = 'rekuperacja-nano';
-const LEAFLET = 'https://unpkg.com/leaflet@1.9.4/dist/';
 const DAYS = [['mon', 'Pn'], ['tue', 'Wt'], ['wed', 'Śr'], ['thu', 'Cz'], ['fri', 'Pt'], ['sat', 'So'], ['sun', 'Nd']];
 
 // klucz: [domena, koncowka, opis, jednostka zapasowa]
@@ -419,7 +417,7 @@ class CompitNanoOneCard extends HTMLElement {
       this._last[key] = st;
     }
     if (first || this._tab === 'diagnostyka') this._loadHistory();
-    if (first) setTimeout(() => this._ensureSidebar(), 1500);
+    if (first) setTimeout(() => this._checkSidebar(true), 1500);
     // v1.9: wyzwolenia automatyk karty do logu
     const autos = this._autoEnts();
     for (const id of autos) {
@@ -557,6 +555,7 @@ class CompitNanoOneCard extends HTMLElement {
       this._render();
     }));
     if (this._tab === 'harmonogram' || this._tab === 'strefy') { this._loadCfg(); this._wirePlan(); }
+    this.shadowRoot.querySelectorAll('[data-sidebar]').forEach((b) => b.addEventListener('click', () => this._checkSidebar(true)));
     this._animStart();
     const body = this.shadowRoot.querySelector('.body');
     if (body) body.scrollTop = sc;
@@ -1092,29 +1091,51 @@ class CompitNanoOneCard extends HTMLElement {
     this._flashMsg(true, '✓ Usunięte: harmonogram, strefy i ich automatyki (ustawienia zostały w karcie)');
   }
 
-  // panel "Rekuperacja" w pasku bocznym (raz; potem flaga w przegladarce)
-  async _ensureSidebar(force) {
-    if (!this._hass || !this._hass.callWS || !this._isAdmin()) return;
-    if (!force && (this._sbTried || this._config.sidebar === false)) return;
-    this._sbTried = true;
-    if (!force) { try { if (localStorage.getItem(LS_SB)) return; } catch (e) { /* brak */ } }
+  // v2.2: panel "Rekuperacja" w lewym pasku HA - sprawdzany przy kazdym otwarciu karty,
+  // zakladany sam raz na zaladowanie strony, a jak HA odmowi - pasek z przyciskiem i bledem
+  async _checkSidebar(create) {
+    if (!this._hass || !this._hass.callWS || this._config.sidebar === false) return;
+    if (!this._isAdmin()) { this._sb = { st: 'noadmin' }; this._schedule(); return; }
+    if (this._sbBusy) return;
+    this._sbBusy = true;
     try {
       const list = await this._hass.callWS({ type: 'lovelace/dashboards/list' }) || [];
-      if (!list.some((d) => d.url_path === SB_URL)) {
+      const d = list.find((x) => x.url_path === SB_URL);
+      if (d && d.show_in_sidebar === false && create) {
+        await this._hass.callWS({ type: 'lovelace/dashboards/update', dashboard_id: d.id, show_in_sidebar: true });
+        this._sb = { st: 'ok', fresh: true };
+        this._pushLog({ t: new Date(), e: 'karta', s: 'Panel „Rekuperacja” był ukryty – włączony w pasku bocznym' });
+      } else if (d) this._sb = { st: d.show_in_sidebar === false ? 'hidden' : 'ok' };
+      else if (create) {
         await this._hass.callWS({ type: 'lovelace/dashboards/create', url_path: SB_URL, title: 'Rekuperacja', icon: 'mdi:air-filter', show_in_sidebar: true, require_admin: false, mode: 'storage' });
-        await this._hass.callWS({ type: 'lovelace/config/save', url_path: SB_URL, config: { title: 'Rekuperacja',
-          views: [{ title: 'Rekuperacja', path: 'rekuperacja', type: 'panel', cards: [{ type: 'custom:compit-nano-one-card', prefix: this._prefix }] }] } });
-        this._pushLog({ t: new Date(), e: 'karta', s: 'Dodano panel „Rekuperacja” w pasku bocznym (/' + SB_URL + ')' });
-        if (force) this._flashMsg(true, '✓ Panel „Rekuperacja” dodany w pasku bocznym – odśwież stronę');
-      } else if (force) this._flashMsg(true, 'Panel „Rekuperacja” już jest w pasku bocznym (/' + SB_URL + ')');
-      this._sbErr = null;
-      try { localStorage.setItem(LS_SB, '1'); } catch (e) { /* brak */ }
+        await this._hass.callWS({ type: 'lovelace/config/save', url_path: SB_URL, config: this._sbConfig() });
+        this._sb = { st: 'ok', fresh: true };
+        this._pushLog({ t: new Date(), e: 'karta', s: 'Dodano panel „Rekuperacja” w lewym pasku (/' + SB_URL + ')' });
+      } else this._sb = { st: 'missing' };
     } catch (e) {
-      this._sbErr = e && e.message ? e.message : String(e);
-      this._pushLog({ t: new Date(), e: 'karta', s: 'Nie udało się dodać panelu w pasku bocznym: ' + this._sbErr });
-      if (force) this._flashMsg(false, '✗ Panel boczny: ' + this._sbErr);
+      const m = e && (e.message || (e.error && e.error.message)) ? (e.message || e.error.message) : (e && e.code ? e.code : JSON.stringify(e));
+      this._sb = { st: 'err', err: m };
+      this._pushLog({ t: new Date(), e: 'karta', s: 'Panel w lewym pasku – błąd HA: ' + m });
     }
+    this._sbBusy = false;
+    if (this._sb && this._sb.fresh) setTimeout(() => { if (this._sb) this._sb.fresh = false; this._schedule(); }, 15000);
     this._schedule();
+  }
+
+  _sbConfig() {
+    return { title: 'Rekuperacja', views: [{ title: 'Rekuperacja', path: 'rekuperacja', type: 'panel', cards: [{ type: 'custom:compit-nano-one-card', prefix: this._prefix }] }] };
+  }
+
+  _sbBar() {
+    const b = this._sb;
+    if (!b || this._config.sidebar === false) return '';
+    if (b.st === 'ok') return b.fresh ? `<div class="flash ok">✓ Panel „Rekuperacja” jest w lewym pasku. Jak go nie widzisz, odśwież stronę (F5).</div>` : '';
+    if (b.st === 'noadmin') return '';
+    const yaml = `views:\n  - title: Rekuperacja\n    path: rekuperacja\n    type: panel\n    cards:\n      - type: custom:compit-nano-one-card\n        prefix: ${this._prefix}`;
+    const why = b.st === 'hidden' ? 'Panel „Rekuperacja” istnieje, ale jest ukryty w lewym pasku.'
+      : b.st === 'err' ? `HA nie pozwolił dodać panelu: <b>${esc(b.err)}</b>` : 'Nie ma jeszcze panelu „Rekuperacja” w lewym pasku HA.';
+    return `<div class="sbbar"><div>${ico('home')} <span>${why}</span> <button class="act" data-sidebar ${this._sbBusy ? 'disabled' : ''}>${b.st === 'hidden' ? 'Pokaż w lewym pasku' : 'Dodaj Rekuperację do lewego paska'}</button></div>
+      ${b.st === 'err' ? `<details><summary>Dodaj ręcznie</summary><div class="small">Ustawienia → Pulpity → <b>+ Dodaj pulpit</b> → Nowy pulpit od zera → tytuł <b>Rekuperacja</b>, ikona <code>mdi:air-filter</code>, zaznacz „Pokaż w pasku bocznym” → Utwórz. Otwórz go → ✎ Edytuj → ⋮ → <b>Edytor kodu</b> i wklej:</div><pre class="pre">${esc(yaml)}</pre></details>` : ''}</div>`;
   }
 
   // automatyki karty, ktore HA ma jako encje
@@ -1201,7 +1222,7 @@ class CompitNanoOneCard extends HTMLElement {
       <div class="row"><button class="opt" data-addslot>+ Dodaj wpis</button></div>
       <div class="small mute">O podanej godzinie, w zaznaczone dni, HA ustawia tryb (i % nawiewu / wywiewu dla biegu, jeśli wpisane). Tryb trzyma się do następnego wpisu albo do zmiany przez strefy.</div>
       ${this._saveBar()}
-      <div class="small mute sb">Panel w pasku bocznym: ${this._sbErr ? `<span class="warn">błąd – ${esc(this._sbErr)}</span>` : '<code>/' + SB_URL + '</code>'} <button class="mini" data-sidebar>Dodaj / sprawdź</button></div>
+      ${this._sbBar()}
     </div>`;
   }
 
@@ -1282,19 +1303,14 @@ class CompitNanoOneCard extends HTMLElement {
     </div>`;
   }
 
-  // ---------------- mapa (Leaflet z unpkg) ----------------
-  _leaflet() {
-    if (window.L && window.L.map) return Promise.resolve(window.L);
-    if (!CompitNanoOneCard._lp) {
-      CompitNanoOneCard._lp = new Promise((res, rej) => {
-        const s = document.createElement('script');
-        s.src = LEAFLET + 'leaflet.js';
-        s.onload = () => res(window.L);
-        s.onerror = () => { CompitNanoOneCard._lp = null; rej(new Error('nie wczytano mapy (brak internetu do unpkg.com?)')); };
-        document.head.appendChild(s);
-      });
+  // ---------------- mapa: wbudowana mapa HA (ha-map) ----------------
+  async _haMapReady() {
+    if (customElements.get('ha-map')) return;
+    // ha-map laduje sie z karta Mapa - wymus jej zaladowanie przez helpery kart HA
+    if (window.loadCardHelpers) {
+      try { const h = await window.loadCardHelpers(); const c = await h.createCardElement({ type: 'map', entities: ['zone.home'] }); if (c) c.hass = this._hass; } catch (e) { /* dalej czekamy */ }
     }
-    return CompitNanoOneCard._lp;
+    await Promise.race([customElements.whenDefined('ha-map'), new Promise((_, rej) => setTimeout(() => rej(new Error('HA nie udostępnił mapy (ha-map)')), 10000))]);
   }
 
   _mountMap() {
@@ -1303,26 +1319,46 @@ class CompitNanoOneCard extends HTMLElement {
     if (!this._mapWrap) {
       this._mapWrap = document.createElement('div');
       this._mapWrap.className = 'mapwrap';
-      this._mapWrap.innerHTML = `<link rel="stylesheet" href="${LEAFLET}leaflet.css"><div class="map"></div>`;
+      this._mapWrap.innerHTML = '<div class="map"><div class="mapErr">Ładuję mapę HA…</div></div>';
     }
     slot.appendChild(this._mapWrap);
-    this._leaflet().then((L) => {
-      if (!this._map) {
-        const z0 = this._draft.z[0];
-        this._map = L.map(this._mapWrap.querySelector('.map')).setView([Number(z0.lat), Number(z0.lon)], 15);
-        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(this._map);
-        this._mapLayer = L.layerGroup().addTo(this._map);
-        this._map.on('click', (e) => this._mapClick(e.latlng));
+    if (this._map) { setTimeout(() => { if (this._map) { this._map.invalidateSize(); this._drawMap(); } }, 0); return; }
+    if (this._mapLoading) return;
+    this._mapLoading = true;
+    (async () => {
+      await this._haMapReady();
+      const box = this._mapWrap.querySelector('.map');
+      const m = document.createElement('ha-map');
+      const dark = this._config.theme !== 'light';
+      m.hass = this._hass;
+      m.entities = [];
+      m.autoFit = false;
+      m.zoom = 15;
+      m.themeMode = dark ? 'dark' : 'auto';
+      m.darkMode = dark;
+      m.style.height = '100%';
+      box.innerHTML = '';
+      box.appendChild(m);
+      const t0 = Date.now();
+      while (!(m.leafletMap && m.Leaflet)) {
+        if (Date.now() - t0 > 10000) throw new Error('mapa HA się nie uruchomiła');
+        await new Promise((r) => setTimeout(r, 150));
       }
-      setTimeout(() => { if (this._map) { this._map.invalidateSize(); this._drawMap(); } }, 0);
-    }).catch((e) => {
-      const m = this._mapWrap.querySelector('.map');
-      if (m) m.innerHTML = `<div class="mapErr">Mapa niedostępna: ${esc(e.message)}. Środek strefy wpisz ręcznie (szer./dł.) albo kliknij „środek = dom”.</div>`;
-    });
+      this._L = m.Leaflet;
+      this._map = m.leafletMap;
+      this._mapLayer = this._L.layerGroup().addTo(this._map);
+      this._map.on('click', (e) => this._mapClick(e.latlng));
+      this._mapFitted = false;
+      setTimeout(() => { if (this._map) { this._map.invalidateSize(); this._drawMap(); } }, 50);
+    })().catch((e) => {
+      const box = this._mapWrap.querySelector('.map');
+      if (box) box.innerHTML = `<div class="mapErr">Mapa niedostępna: ${esc(e.message)}. Środek strefy wpisz ręcznie (szer./dł.) albo kliknij „środek = dom”.</div>`;
+      this._pushLog({ t: new Date(), e: 'karta', s: 'Mapa HA: ' + e.message });
+    }).finally(() => { this._mapLoading = false; });
   }
 
   _drawMap() {
-    const L = window.L;
+    const L = this._L;
     if (!this._map || !L || !this._draft) return;
     this._mapLayer.clearLayers();
     const col = ['#27b4ff', '#ffa43a'];
@@ -1392,7 +1428,6 @@ class CompitNanoOneCard extends HTMLElement {
       if (h.latitude) { z.lat = h.latitude; z.lon = h.longitude; this._mapFitted = false; this._render(); }
     }));
     R.querySelectorAll('[data-saveall]').forEach((b) => b.addEventListener('click', () => this._saveAll()));
-    R.querySelectorAll('[data-sidebar]').forEach((b) => b.addEventListener('click', () => this._ensureSidebar(true)));
     R.querySelectorAll('[data-delall]').forEach((b) => b.addEventListener('click', () => {
       const v = b.dataset.delall;
       if (v === 'ask') { this._confirmDel = true; this._render(); } else if (v === 'no') { this._confirmDel = false; this._render(); } else this._deleteAll();
@@ -1437,6 +1472,7 @@ class CompitNanoOneCard extends HTMLElement {
     const nast = ['n_komfort', 'n_eko', 'n_chlodzenie', 'n_reczna', 'n_poza'].map((k) => opt(k, 1)).join('')
       + ['zad_nawiew', 'zad_wywiew', 'aero_moc'].map((k) => opt(k, 0)).join('');
     return `
+      ${this._sbBar()}
       ${this._renderHero(bypassOn)}
       ${this._renderGauge()}
       ${this._renderBar()}
@@ -1938,6 +1974,9 @@ const CSS = `
   .autol .aon { color:var(--success-color,#2e9e4f); cursor:pointer; } .autol .mute { cursor:pointer; }
   .warn { color:var(--warning-color,#ffa600); }
   .sb { margin-top:10px; }
+  .sbbar { padding:10px 12px; border-radius:12px; background:rgba(39,180,255,.12); border:1px solid rgba(39,180,255,.45); margin:0 0 10px; font-size:.9em; }
+  .sbbar > div { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; }
+  .mapwrap .map ha-map { display:block; height:100%; }
   .tabs { overflow-x:auto; scrollbar-width:none; } .tab { white-space:nowrap; }
 `;
 
