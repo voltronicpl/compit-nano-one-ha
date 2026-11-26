@@ -46,6 +46,28 @@ Ze starszym YAML-em (v1.4) karta dalej działa na `ustaw_bieg`, `ustaw_program`,
 
 **Bez szukania blokady:** przełącznik `switch.<prefix>_sterowanie_z_ha_inext` („Sterowanie z HA (iNext)”) karta włącza sama przy pierwszej zmianie, czeka, aż ESP potwierdzi, i dopiero wysyła wartość. Po każdej zmianie pokazuje „✓ wysłane” albo „✗ błąd”. Gdy ESP nie ma encji sterujących, karta pokazuje czerwony pasek „Wgraj na ESP YAML v1.6” z listą brakujących encji, a gdy ESP jest offline, mówi to wprost.
 
+## Harmonogram i strefy (v1.9)
+
+Karta tylko ustawia. Całą robotę robi Home Assistant, więc działa też, gdy nikt nie ma otwartej karty. Po kliknięciu **Zapisz w HA** (konto administratora) karta tworzy albo aktualizuje:
+
+- automatykę `Rekuperacja – harmonogram` (`compit_rekuperacja_harmonogram`),
+- strefy `zone.rekuperacja_1` i `zone.rekuperacja_2` (pasywne, więc nie psują stanu „w domu” telefonów),
+- automatyki `Rekuperacja – strefa 1` / `strefa 2` (`compit_rekuperacja_strefa_1/_2`).
+
+Ustawienia karty są zapisane w samych automatykach, więc w każdej przeglądarce widać to samo. Automatyk nie edytuj ręcznie, bo karta nadpisze je przy następnym zapisie. Przycisk **Usuń wszystko z HA** kasuje te automatyki i strefy.
+
+**Harmonogram:** wpisy z dniami tygodnia (Pn…Nd, skróty Pn–Pt / Weekend / Codziennie), godziną, trybem z „Ustaw tryb”, opcjonalnie temperaturą ręczną i % nawiewu / wywiewu dla biegu z trybu.
+
+**Strefy:** dowolna liczba telefonów (`device_tracker` z aplikacji HA albo `person`, liczy się GPS), okręgi na mapie (klik w mapę ustawia środek, promień w metrach). Strefa 1 jest domyślnie włączona, strefa 2 to opcja.
+- **Wjazd** (pierwszy świeży telefon w strefie): wietrzenie przez X minut z ustawionym % nawiewu / wywiewu, potem tryb normalny (i % biegu).
+- **Wyjazd** (ostatni telefon wyszedł, po 1 min): HA przywraca % biegów sprzed wjazdu, potem ustawia tryb wyjazdu (i % biegu, jeśli wpisane).
+- Telefon, który nie raportował dłużej niż „Nieaktualny po” (domyślnie 30 min), się nie liczy. 0 wyłącza to sprawdzanie. Jak telefon w domu długo milczy i HA przełącza tryb bez powodu, daj 0.
+- Wietrzenie wymaga YAML z opcją „Wietrzenie” w „Ustaw tryb” albo przełącznikiem `switch.<prefix>_wietrzenie`. Bez tego wjazd od razu ustawia tryb normalny. Po wgraniu nowego YAML kliknij Zapisz jeszcze raz.
+
+**Pasek boczny:** przy pierwszym otwarciu (konto administratora) karta dodaje panel **Rekuperacja** (`/rekuperacja-nano`) w pasku bocznym z tą kartą na cały ekran. Wyłączysz to opcją `sidebar: false`. W zakładce Harmonogram jest przycisk „Dodaj / sprawdź”.
+
+Mapa to Leaflet z unpkg.com i kafelki OpenStreetMap, więc przeglądarka potrzebuje internetu. Bez niego środek strefy wpisujesz ręcznie.
+
 ## Instalacja przez HACS
 
 1. HACS → ⋮ → **Custom repositories** → `https://github.com/voltronicpl/compit-nano-one-ha`, typ **Dashboard** → Dodaj → Pobierz. Przeładuj przeglądarkę.
@@ -57,8 +79,9 @@ Ze starszym YAML-em (v1.4) karta dalej działa na `ustaw_bieg`, `ustaw_program`,
    # title: Rekuperacja
    # theme: light             # jasny wygląd w kolorach motywu HA (domyślnie ciemny wg wzoru)
    # niepewne: [t_czerpnia]   # które temperatury oznaczać "?" (domyślnie żadne)
-   # tab: diagnostyka          # zakładka startowa
+   # tab: diagnostyka          # zakładka startowa: rekuperator | harmonogram | strefy | diagnostyka
    # zewn: sensor.hydrolution_temperatura_zewnetrzna_bt1   # temp. zewnętrzna z pompy ciepła (BT1), false = bez kafla
+   # sidebar: false            # nie dodawaj panelu Rekuperacja w pasku bocznym
    # history_hours: 6          # ile godzin wstecz pokazuje ramki i log w Diagnostyce
    # entities:                 # gdy jakaś encja ma inne ID
    #   t_nawiew: sensor.moja_temperatura_nawiewu
@@ -186,6 +209,7 @@ Encje diagnostyczne i konfiguracyjne (`entity_category` w ESPHome) nie trafiają
 
 ## Wersje
 
+- **v1.9** – panel Rekuperacja w pasku bocznym, zakładka Harmonogram (tygodniowy, tworzy automatykę w HA), zakładka Strefy (telefony, mapa z okręgami, strefa 1 + opcjonalna strefa 2, wjazd = wietrzenie X min i tryb normalny, wyjazd = przywrócenie % i tryb wyjazdu), w Sterowaniu linia „ostatnio sterowało”, wyzwolenia automatyk w logu.
 - **v1.8** – kafel **Na zewnątrz (pompa BT1)**: temperatura zewnętrzna z pompy ciepła (`sensor.hydrolution_temperatura_zewnetrzna_bt1`, opcja `zewn:`) i różnica do czerpni. Bez encji pompy kafla nie ma.
 - **v1.7** – pod YAML v1.8: kafle temperatur bez wartości pokazują „brak czujnika”, domyślnie bez znaku „?” przy czerpni i wywiewie (`niepewne:` dalej działa), sprawność odzysku mówi, którego czujnika brakuje.
 - **v1.6** – encje szukane też po urządzeniu (gdy HA nadał im inne ID niż `<prefix>_…`), w Diagnostyce i w kopiowanym logu lista brakujących encji sterujących oraz encji wyłączonych w rejestrze HA.
